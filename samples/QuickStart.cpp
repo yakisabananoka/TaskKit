@@ -2,6 +2,7 @@
 #include "../include/TaskKit.h"
 
 using namespace TKit;
+using namespace std::literals::chrono_literals;
 
 Task<> ExampleDelayFrameTask()
 {
@@ -17,8 +18,30 @@ Task<> ExampleDelayFrameTask()
 Task<> ExampleDelayForTask()
 {
     std::printf("ExampleDelayForTask start\n");
-    co_await WaitFor(std::chrono::seconds(2));
+    co_await WaitFor(2s);
     std::printf("ExampleDelayForTask end after 2 seconds\n");
+}
+
+Task<> ExampleWhenAllTask()
+{
+    std::printf("ExampleWhenAll start\n");
+
+    auto task1 = []() -> Task<>
+    {
+        std::printf("  Task1 start\n");
+        co_await WaitFor(5000ms);
+        std::printf("  Task1 end\n");
+    };
+
+    auto task2 = []() -> Task<>
+    {
+        std::printf("  Task2 start\n");
+        co_await WaitFor(3000ms);
+        std::printf("  Task2 end\n");
+    };
+
+    co_await WhenAll(task1(), task2());
+    std::printf("ExampleWhenAll end - all tasks completed\n");
 }
 
 int main()
@@ -27,8 +50,10 @@ int main()
     const auto id = taskSystem.GetCurrentSchedulerId();
     auto& scheduler = taskSystem.GetScheduler(id);
 
-    ExampleDelayFrameTask().Forget();
-    ExampleDelayForTask().Forget();
+    // Run different examples (uncomment to try)
+    //ExampleDelayFrameTask().Forget();
+    //ExampleDelayForTask().Forget();
+    ExampleWhenAllTask().Forget();
 
     while (!GetAsyncKeyState(VK_ESCAPE))
     {

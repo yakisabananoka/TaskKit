@@ -32,6 +32,18 @@ namespace TKit
 			handle_ = nullptr;
 		}
 
+		[[nodiscard]]
+		bool IsDone() const noexcept
+		{
+			return !handle_ || handle_.done();
+		}
+
+		[[nodiscard]]
+		bool IsReady() const noexcept
+		{
+			return !handle_ || handle_.promise().IsReady();
+		}
+
 		operator Task<>() &&
 		{
 			return Task(std::move(handle_));

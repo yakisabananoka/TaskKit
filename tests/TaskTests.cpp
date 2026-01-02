@@ -410,3 +410,325 @@ TEST_F(TaskKitTest, WaitUntilPastTime)
 	task().Forget();
 	EXPECT_EQ(counter, 2); // Should complete immediately
 }
+
+// WhenAll Tests
+TEST_F(TaskKitTest, WhenAllBasic)
+{
+	int counter1 = 0;
+	int counter2 = 0;
+	int counter3 = 0;
+
+	auto task1 = [&]() -> Task<>
+	{
+		counter1++;
+		co_yield {};
+		counter1++;
+		co_return;
+	};
+
+	auto task2 = [&]() -> Task<>
+	{
+		counter2++;
+		co_yield {};
+		co_yield {};
+		counter2++;
+		co_return;
+	};
+
+	auto task3 = [&]() -> Task<>
+	{
+		counter3++;
+		co_return;
+	};
+
+	auto allTask = [&]() -> Task<>
+	{
+		co_await WhenAll(task1(), task2(), task3());
+		co_return;
+	};
+
+	allTask().Forget();
+	EXPECT_EQ(counter1, 1);
+	EXPECT_EQ(counter2, 1);
+	EXPECT_EQ(counter3, 1);
+
+	RunScheduler(1);
+	EXPECT_EQ(counter1, 2);
+	EXPECT_EQ(counter2, 1);
+	EXPECT_EQ(counter3, 1);
+
+	RunScheduler(1);
+	EXPECT_EQ(counter1, 2);
+	EXPECT_EQ(counter2, 2);
+	EXPECT_EQ(counter3, 1);
+}
+
+TEST_F(TaskKitTest, WhenAllEmpty)
+{
+	bool completed = false;
+
+	auto allTask = [&]() -> Task<>
+	{
+		co_await WhenAll();
+		completed = true;
+		co_return;
+	};
+
+	allTask().Forget();
+	EXPECT_TRUE(completed);
+}
+
+TEST_F(TaskKitTest, WhenAllSingleTask)
+{
+	int counter = 0;
+
+	auto task = [&]() -> Task<>
+	{
+		counter++;
+		co_yield {};
+		counter++;
+		co_return;
+	};
+
+	auto allTask = [&]() -> Task<>
+	{
+		co_await WhenAll(task());
+		counter++;
+		co_return;
+	};
+
+	allTask().Forget();
+	EXPECT_EQ(counter, 1);
+
+	RunScheduler(1);
+	EXPECT_EQ(counter, 3);
+}
+
+TEST_F(TaskKitTest, WhenAllWithReturnValues)
+{
+	auto task1 = []() -> Task<int>
+	{
+		co_yield {};
+		co_return 42;
+	};
+
+	auto task2 = []() -> Task<std::string>
+	{
+		co_yield {};
+		co_yield {};
+		co_return std::string("Hello");
+	};
+
+	auto task3 = []() -> Task<double>
+	{
+		co_return 3.14;
+	};
+
+	std::tuple<int, std::string, double> result;
+
+	auto allTask = [&]() -> Task<>
+	{
+		result = co_await WhenAll(task1(), task2(), task3());
+		co_return;
+	};
+
+	allTask().Forget();
+
+	RunScheduler(2);
+	EXPECT_EQ(std::get<0>(result), 42);
+	EXPECT_EQ(std::get<1>(result), "Hello");
+	EXPECT_DOUBLE_EQ(std::get<2>(result), 3.14);
+}
+
+TEST_F(TaskKitTest, WhenAllMixedDurations)
+{
+	int counter1 = 0;
+	int counter2 = 0;
+	int counter3 = 0;
+
+	auto task1 = [&]() -> Task<>
+	{
+		counter1++;
+		co_return; // Completes immediately
+	};
+
+	auto task2 = [&]() -> Task<>
+	{
+		counter2++;
+		co_yield {};
+		counter2++;
+		co_return;
+	};
+
+	auto task3 = [&]() -> Task<>
+	{
+		counter3++;
+		co_yield {};
+		co_yield {};
+		co_yield {};
+		counter3++;
+		co_return;
+	};
+
+	bool completed = false;
+
+	auto allTask = [&]() -> Task<>
+	{
+		co_await WhenAll(task1(), task2(), task3());
+		completed = true;
+		co_return;
+	};
+
+	allTask().Forget();
+	EXPECT_EQ(counter1, 1);
+	EXPECT_EQ(counter2, 1);
+	EXPECT_EQ(counter3, 1);
+	EXPECT_FALSE(completed);
+
+	RunScheduler(1);
+	EXPECT_EQ(counter2, 2);
+	EXPECT_EQ(counter3, 1);
+	EXPECT_FALSE(completed);
+
+	RunScheduler(1);
+	EXPECT_EQ(counter3, 1);
+	EXPECT_FALSE(completed);
+
+	RunScheduler(1);
+	EXPECT_EQ(counter3, 2);
+	EXPECT_TRUE(completed); // All tasks completed
+}
+
+TEST_F(TaskKitTest, WhenAllVectorEmpty)
+{
+	bool completed = false;
+
+	auto allTask = [&]() -> Task<>
+	{
+		std::vector<Task<>> tasks;
+		co_await WhenAll(std::move(tasks));
+		completed = true;
+		co_return;
+	};
+
+	allTask().Forget();
+	EXPECT_TRUE(completed);
+}
+
+TEST_F(TaskKitTest, WhenAllVectorSingle)
+{
+	int counter = 0;
+
+	auto allTask = [&]() -> Task<>
+	{
+		std::vector<Task<>> tasks;
+		tasks.push_back([&]() -> Task<>
+		{
+			counter++;
+			co_yield {};
+			counter++;
+			co_return;
+		}());
+
+		co_await WhenAll(std::move(tasks));
+		counter++;
+		co_return;
+	};
+
+	allTask().Forget();
+	EXPECT_EQ(counter, 1);
+
+	RunScheduler(1);
+	EXPECT_EQ(counter, 3);
+}
+
+TEST_F(TaskKitTest, WhenAllVectorMultiple)
+{
+	int counter1 = 0;
+	int counter2 = 0;
+	int counter3 = 0;
+
+	auto allTask = [&]() -> Task<>
+	{
+		std::vector<Task<>> tasks;
+
+		tasks.push_back([&]() -> Task<>
+		{
+			counter1++;
+			co_yield {};
+			counter1++;
+			co_return;
+		}());
+
+		tasks.push_back([&]() -> Task<>
+		{
+			counter2++;
+			co_yield {};
+			co_yield {};
+			counter2++;
+			co_return;
+		}());
+
+		tasks.push_back([&]() -> Task<>
+		{
+			counter3++;
+			co_return;
+		}());
+
+		co_await WhenAll(std::move(tasks));
+		co_return;
+	};
+
+	allTask().Forget();
+	EXPECT_EQ(counter1, 1);
+	EXPECT_EQ(counter2, 1);
+	EXPECT_EQ(counter3, 1);
+
+	RunScheduler(1);
+	EXPECT_EQ(counter1, 2);
+	EXPECT_EQ(counter2, 1);
+
+	RunScheduler(1);
+	EXPECT_EQ(counter2, 2);
+}
+
+TEST_F(TaskKitTest, WhenAllAllImmediateCompletion)
+{
+	int counter1 = 0;
+	int counter2 = 0;
+	int counter3 = 0;
+
+	auto task1 = [&]() -> Task<>
+	{
+		counter1++;
+		co_return;
+	};
+
+	auto task2 = [&]() -> Task<>
+	{
+		counter2++;
+		co_return;
+	};
+
+	auto task3 = [&]() -> Task<>
+	{
+		counter3++;
+		co_return;
+	};
+
+	bool completed = false;
+
+	auto allTask = [&]() -> Task<>
+	{
+		co_await WhenAll(task1(), task2(), task3());
+		completed = true;
+		co_return;
+	};
+
+	allTask().Forget();
+	EXPECT_EQ(counter1, 1);
+	EXPECT_EQ(counter2, 1);
+	EXPECT_EQ(counter3, 1);
+	EXPECT_TRUE(completed); // All tasks completed immediately
+}
+
