@@ -8,6 +8,8 @@ namespace TKit
 	class PromiseBase
 	{
 	public:
+		virtual ~PromiseBase() = default;
+
 		void return_value(T value)
 		{
 			promise_.set_value(std::move(value));
@@ -18,14 +20,6 @@ namespace TKit
 			promise_.set_exception(std::current_exception());
 		}
 
-	protected:
-		PromiseBase() :
-			future_(promise_.get_future())
-		{
-
-		}
-		virtual ~PromiseBase() = default;
-
 		[[nodiscard]]
 		bool IsReady() const
 		{
@@ -33,9 +27,15 @@ namespace TKit
 			return future_.wait_for(0s) == std::future_status::ready;
 		}
 
-		void Get()
+		T Get()
 		{
-			future_.get();
+			return future_.get();
+		}
+
+	protected:
+		PromiseBase() :
+			future_(promise_.get_future())
+		{
 		}
 
 	private:

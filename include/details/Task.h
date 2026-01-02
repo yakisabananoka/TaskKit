@@ -129,9 +129,10 @@ namespace TKit
 			isForgotten_ = true;
 		}
 
-		Awaiter await_transform(Task&& task) noexcept
+		template<typename U>
+		typename Task<U>::Awaiter await_transform(Task<U>&& task) noexcept
 		{
-			return Awaiter{ std::move(task) };
+			return typename Task<U>::Awaiter{ std::move(task) };
 		}
 
 		auto get_return_object()

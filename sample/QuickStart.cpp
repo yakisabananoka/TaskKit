@@ -27,6 +27,7 @@ int main()
     const auto id = taskSystem.GetCurrentSchedulerId();
     auto& scheduler = taskSystem.GetScheduler(id);
 
+    ExampleDelayFrameTask().Forget();
     ExampleDelayForTask().Forget();
 
     while (!GetAsyncKeyState(VK_ESCAPE))
