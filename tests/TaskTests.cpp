@@ -619,16 +619,19 @@ TEST_F(TaskKitTest, WhenAllVectorSingle)
 {
 	int counter = 0;
 
+	// Define the inner task OUTSIDE allTask to avoid capture issues
+	auto task = [&]() -> Task<>
+	{
+		counter++;
+		co_yield {};
+		counter++;
+		co_return;
+	};
+
 	auto allTask = [&]() -> Task<>
 	{
 		std::vector<Task<>> tasks;
-		tasks.push_back([&]() -> Task<>
-		{
-			counter++;
-			co_yield {};
-			counter++;
-			co_return;
-		}());
+		tasks.push_back(task());
 
 		co_await WhenAll(std::move(tasks));
 		counter++;
@@ -638,6 +641,7 @@ TEST_F(TaskKitTest, WhenAllVectorSingle)
 	allTask().Forget();
 	EXPECT_EQ(counter, 1);
 
+	// Run scheduler until all tasks complete
 	RunScheduler(1);
 	EXPECT_EQ(counter, 3);
 }
@@ -648,32 +652,36 @@ TEST_F(TaskKitTest, WhenAllVectorMultiple)
 	int counter2 = 0;
 	int counter3 = 0;
 
+	// Define tasks OUTSIDE allTask to avoid capture issues
+	auto task1 = [&]() -> Task<>
+	{
+		counter1++;
+		co_yield {};
+		counter1++;
+		co_return;
+	};
+
+	auto task2 = [&]() -> Task<>
+	{
+		counter2++;
+		co_yield {};
+		co_yield {};
+		counter2++;
+		co_return;
+	};
+
+	auto task3 = [&]() -> Task<>
+	{
+		counter3++;
+		co_return;
+	};
+
 	auto allTask = [&]() -> Task<>
 	{
 		std::vector<Task<>> tasks;
-
-		tasks.push_back([&]() -> Task<>
-		{
-			counter1++;
-			co_yield {};
-			counter1++;
-			co_return;
-		}());
-
-		tasks.push_back([&]() -> Task<>
-		{
-			counter2++;
-			co_yield {};
-			co_yield {};
-			counter2++;
-			co_return;
-		}());
-
-		tasks.push_back([&]() -> Task<>
-		{
-			counter3++;
-			co_return;
-		}());
+		tasks.push_back(task1());
+		tasks.push_back(task2());
+		tasks.push_back(task3());
 
 		co_await WhenAll(std::move(tasks));
 		co_return;
