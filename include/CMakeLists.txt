@@ -1,16 +1,16 @@
-# ヘッダーオンリーライブラリとしてインターフェースライブラリを作成
+# Create interface library for header-only library
 add_library(TaskKit INTERFACE)
 
-# インクルードディレクトリの設定
+# Include directory settings
 target_include_directories(TaskKit INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<INSTALL_INTERFACE:include>
 )
 
-# C++標準の要求
+# Require C++ standard
 target_compile_features(TaskKit INTERFACE cxx_std_20)
 
-# インストール設定（オプション）
+# Install configuration (optional)
 install(TARGETS TaskKit
     EXPORT TaskKitTargets
     LIBRARY DESTINATION lib

@@ -27,6 +27,11 @@ namespace TKit
 			nextFrameHandles_.push(handle);
 		}
 
+		std::size_t GetPendingTaskCount() const
+		{
+			return nextFrameHandles_.size();
+		}
+
 	private:
 		std::queue<std::coroutine_handle<>> nextFrameHandles_;
 	};

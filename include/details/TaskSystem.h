@@ -13,15 +13,47 @@ namespace TKit
 	public:
 		struct SchedulerRegistration final
 		{
-			SchedulerRegistration(size_t id)
+			SchedulerRegistration() : valid_(false)
+			{
+			}
+
+			SchedulerRegistration(size_t id) : valid_(true)
 			{
 				GetInstance().schedulerIdStack_.push(id);
 			}
 
 			~SchedulerRegistration()
 			{
-				GetInstance().schedulerIdStack_.pop();
+				if (valid_)
+				{
+					GetInstance().schedulerIdStack_.pop();
+				}
 			}
+
+			SchedulerRegistration(const SchedulerRegistration&) = delete;
+			SchedulerRegistration& operator=(const SchedulerRegistration&) = delete;
+
+			SchedulerRegistration(SchedulerRegistration&& other) noexcept : valid_(other.valid_)
+			{
+				other.valid_ = false;
+			}
+
+			SchedulerRegistration& operator=(SchedulerRegistration&& other) noexcept
+			{
+				if (this != &other)
+				{
+					if (valid_)
+					{
+						GetInstance().schedulerIdStack_.pop();
+					}
+					valid_ = other.valid_;
+					other.valid_ = false;
+				}
+				return *this;
+			}
+
+		private:
+			bool valid_;
 		};
 
 		[[nodiscard]]
@@ -72,7 +104,8 @@ namespace TKit
 	private:
 		TaskSystem()
 		{
-			static_cast<void>(CreateScheduler());
+			auto defaultId = CreateScheduler();
+			schedulerIdStack_.push(defaultId);
 		}
 
 		std::stack<std::size_t> schedulerIdStack_{};
