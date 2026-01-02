@@ -19,10 +19,14 @@ TaskKit is a lightweight, header-only C++20 coroutine library for managing async
 
 ## Requirements
 
-- C++20 compatible compiler
-  - GCC 10+
-  - Clang 10+
-  - MSVC 2019 16.8+
+- C++20 compatible compiler with coroutines support:
+  - **GCC 11+** (recommended) - Coroutines enabled by default with `-std=c++20`
+    - GCC 10 has experimental support but requires `-fcoroutines` flag and has known bugs
+  - **Clang 14+** (recommended) - Full C++20 coroutines support
+    - Clang 8-13 have partial support but not recommended for production
+  - **MSVC 19.28+** (Visual Studio 2019 16.8+) - Feature-complete C++20 coroutines
+    - Use `/std:c++20` or `/std:c++latest`
+  - **AppleClang 12+** - Full coroutines support
 - CMake 3.15 or later
 
 ## Quick Start
