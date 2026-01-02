@@ -3,7 +3,6 @@
 
 #include <functional>
 #include <tuple>
-#include <variant>
 #include "Task.h"
 
 #if !defined(TASKKIT_STOP_TOKEN_PROCESS)
@@ -117,8 +116,6 @@ namespace TKit
 			co_return;
 		}
 
-		// Await each task sequentially, matching the behavior of the variadic template version
-		// Tasks that are already ready will complete immediately via await_ready()
 		for (auto& task : tasks)
 		{
 			co_await std::move(task);

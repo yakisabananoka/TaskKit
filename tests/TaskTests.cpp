@@ -22,16 +22,6 @@ protected:
 		auto& taskSystem = TaskSystem::GetInstance();
 		auto& scheduler = taskSystem.GetScheduler(schedulerId_);
 
-		// Run scheduler to clean up any remaining tasks
-		for (int i = 0; i < 100; ++i)
-		{
-			scheduler.Update();
-			if (scheduler.GetPendingTaskCount() == 0)
-			{
-				break;
-			}
-		}
-
 		// Verify no tasks are left pending
 		EXPECT_EQ(scheduler.GetPendingTaskCount(), 0)
 			<< "Test left " << scheduler.GetPendingTaskCount() << " pending tasks";
@@ -361,6 +351,8 @@ TEST_F(TaskKitTest, MultipleYields)
 		RunScheduler(1);
 		EXPECT_EQ(counter, i + 1);
 	}
+	// Run one more time to allow the task to complete after the last yield
+	RunScheduler(1);
 }
 
 // WaitUntil Tests
