@@ -30,7 +30,7 @@ option(BUILD_SAMPLES "Build sample programs" ON)
 option(BUILD_TESTS "Build tests" ON)
 
 if(BUILD_SAMPLES)
-    add_subdirectory(sample)
+    add_subdirectory(samples)
 endif()
 
 if(BUILD_TESTS)
