@@ -1,5 +1,4 @@
-﻿#include <Windows.h>
-#include "../include/TaskKit.h"
+﻿#include "../include/TaskKit.h"
 
 using namespace TKit;
 using namespace std::literals::chrono_literals;
@@ -55,11 +54,12 @@ int main()
     //ExampleDelayForTask().Forget();
     ExampleWhenAllTask().Forget();
 
-    while (!GetAsyncKeyState(VK_ESCAPE))
+    while (scheduler.GetPendingTaskCount() > 0)
     {
         scheduler.Update();
-        Sleep(16);
+        std::this_thread::sleep_for(16ms);
     }
 
+    std::printf("All tasks completed.\n");
     return 0;
 }
