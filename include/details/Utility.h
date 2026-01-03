@@ -2,6 +2,8 @@
 #define TASKKIT_UTILITY_H
 
 #include <functional>
+#include <memory>
+#include <optional>
 #include <tuple>
 #include "Task.h"
 
@@ -13,11 +15,57 @@ namespace TKit
 {
 	namespace Details
 	{
+		template<typename T, typename... Results>
+		constexpr bool FulfillsAllType = (std::is_same_v<T, Results> && ...);
+
+		template<typename... Results>
+		constexpr bool FulfillsAllVoid = FulfillsAllType<void, Results...>;
+
+		template<typename... Results>
+		constexpr bool FulfillsSameType = (std::is_same_v<Results, std::tuple_element_t<0, std::tuple<Results...>>> && ...);
+
+		template<typename... Results>
+		constexpr bool HasAnyType = (sizeof...(Results) > 0);
+
 		inline void ThrowIfStopRequested(const std::stop_token& stopToken)
 		{
 			if (stopToken.stop_requested())
 			{
 				throw std::runtime_error("Task cancelled via stop_token");
+			}
+		}
+
+		template<typename Result>
+		inline auto ToMonostateIfVoid(Task<Result>&& task)
+		{
+			if constexpr (std::is_void_v<Result>)
+			{
+				return std::move(task).ToMonostateTask();
+			}
+			else
+			{
+				return std::move(task);
+			}
+		}
+
+		template<std::size_t I, typename ResultVariant, typename TaskResult>
+		inline Task<> WhenAnyHelperTask(std::shared_ptr<std::optional<ResultVariant>> result, Task<TaskResult> task)
+		{
+			auto taskResult = co_await std::move(task);
+			if (!result->has_value())
+			{
+				*result = ResultVariant(std::in_place_index<I>, std::move(taskResult));
+			}
+		}
+
+		template<std::size_t I, typename ResultVariant, typename First, typename... Others>
+		inline void WhenAnyHelper(std::shared_ptr<std::optional<ResultVariant>> result, Task<First>&& first, Task<Others>&&... others)
+		{
+			WhenAnyHelperTask<I>(result, std::move(first)).Forget();
+
+			if constexpr (sizeof...(others) > 0)
+			{
+				WhenAnyHelper<I + 1>(result, std::move(others)...);
 			}
 		}
 	}
@@ -82,31 +130,21 @@ namespace TKit
 	}
 
 	template<typename... Results>
-	inline Task<std::tuple<Results...>> WhenAll(Task<Results>&&... tasks)
+	using WhenAllResultType = std::tuple<std::conditional_t<std::is_void_v<Results>, std::monostate, Results>...>;
+
+	template<typename... Results>
+		requires Details::HasAnyType<Results...> && (!Details::FulfillsAllVoid<void, Results...>)
+	inline Task<WhenAllResultType<Results...>> WhenAll(Task<Results>&&... tasks)
 	{
-		if constexpr (sizeof...(Results) == 0)
-		{
-			co_return std::tuple{};
-		}
-		else
-		{
-			co_return std::make_tuple(co_await std::move(tasks)...);
-		}
+		co_return std::make_tuple(co_await Details::ToMonostateIfVoid(std::move(tasks))...);
 	}
 
 	template<typename... Results>
-		requires (std::same_as<Results, void>&&...)
+		requires Details::HasAnyType<Results...> && Details::FulfillsAllVoid<Results...>
 	inline Task<> WhenAll(Task<Results>&&... tasks)
 	{
-		if constexpr (sizeof...(tasks) == 0)
-		{
-			co_return;
-		}
-		else
-		{
-			(co_await std::move(tasks), ...);
-			co_return;
-		}
+		(co_await std::move(tasks), ...);
+		co_return;
 	}
 
 	inline Task<> WhenAll(std::vector<Task<>> tasks)
@@ -122,6 +160,39 @@ namespace TKit
 		}
 
 		co_return;
+	}
+
+	template<typename... Results>
+	using WhenAnyResultType = std::variant<std::conditional_t<std::is_void_v<Results>, std::monostate, Results>...>;
+
+	template<typename... Results>
+		requires Details::HasAnyType<Results...> && (!Details::FulfillsAllVoid<Results...>)
+	inline Task<WhenAnyResultType<Results...>> WhenAny(Task<Results>&&... tasks)
+	{
+		auto result = std::make_shared<std::optional<WhenAnyResultType<Results...>>>();
+		Details::WhenAnyHelper<0>(result, Details::ToMonostateIfVoid(std::move(tasks))...);
+
+		while (!result->has_value())
+		{
+			co_yield {};
+		}
+
+		co_return std::move(result->value());
+	}
+
+	template<typename... Results>
+		requires Details::HasAnyType<Results...> && Details::FulfillsAllVoid<Results...>
+	inline Task<std::size_t> WhenAny(Task<Results>&&... tasks)
+	{
+		auto result = std::make_shared<std::optional<WhenAnyResultType<Results...>>>();
+		Details::WhenAnyHelper<0>(result, Details::ToMonostateIfVoid(std::move(tasks))...);
+
+		while (!result->has_value())
+		{
+			co_yield {};
+		}
+
+		co_return result->value().index();
 	}
 }
 

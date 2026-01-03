@@ -33,15 +33,16 @@ namespace TKit
 		}
 
 		[[nodiscard]]
-		bool IsDone() const noexcept
-		{
-			return !handle_ || handle_.done();
-		}
-
-		[[nodiscard]]
 		bool IsReady() const noexcept
 		{
 			return !handle_ || handle_.promise().IsReady();
+		}
+
+		[[nodiscard]]
+		Task<std::monostate> ToMonostateTask() &&
+		{
+			co_await std::move(*this);
+			co_return std::monostate{};
 		}
 
 		operator Task<>() &&
