@@ -8,7 +8,7 @@ namespace TKit::Tests
 	using namespace std::chrono_literals;
 	using TestClock = std::chrono::steady_clock;
 
-	class TaskKitTestBase : public ::testing::Test
+	class TestBase : public ::testing::Test
 	{
 	protected:
 		void SetUp() override
