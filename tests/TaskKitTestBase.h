@@ -1,7 +1,7 @@
 ﻿#ifndef TASKKIT_TASKKITTESTBASE_H
 #define TASKKIT_TASKKITTESTBASE_H
 #include <gtest/gtest.h>
-#include "../include/TaskKit.h"
+#include "TaskKit.h"
 
 namespace TKit::Tests
 {
