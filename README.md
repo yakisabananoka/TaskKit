@@ -1,33 +1,74 @@
 # TaskKit
 
-[English](README.md) | [日本語](README_ja.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## Overview
+Provides an intuitive and lightweight task system with frame-based scheduling for C++20 coroutines.
 
-TaskKit is a lightweight, header-only C++20 coroutine library for managing asynchronous tasks with frame-based scheduling. It provides an intuitive API for writing asynchronous code using modern C++ coroutines.
+* **Header-only library** - Easy integration, just include and use
+* **C++20 coroutines** - Modern async/await syntax with `co_await`
+* **Frame-based scheduling** - Perfect for game loops and real-time applications
+* **Time-based delays** - Support for both frame delays (`DelayFrame`) and duration-based waits (`WaitFor`)
+* **Task composition** - Combine multiple tasks with `WhenAll`
+* **Thread-local by design** - Automatic thread safety through thread-local storage
+* **Zero dependencies** - Only requires C++20 standard library
 
-## Features
+---
 
-- **Header-only library** - Easy integration, just include and use
-- **C++20 coroutines** - Modern async/await syntax
-- **Frame-based scheduling** - Perfect for game loops and real-time applications
-- **Time-based delays** - Support for both frame delays and duration-based waits
-- **Task composition** - Combine multiple tasks with `WhenAll`
-- **Stop token support** - Cancellable tasks via `std::stop_token`
-- **Zero dependencies** - Only requires C++20 standard library
-- **Lightweight** - Minimal overhead design
+- [Getting Started](#getting-started)
+  - [Requirements](#requirements)
+  - [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Core Concepts](#core-concepts)
+  - [Task Lifecycle](#task-lifecycle)
+  - [TaskSystem and Schedulers](#tasksystem-and-schedulers)
+- [Usage Examples](#usage-examples)
+  - [Delayed Execution](#delayed-execution)
+  - [Task with Return Value](#task-with-return-value)
+  - [Concurrent Tasks](#concurrent-tasks)
+  - [Cancellable Tasks](#cancellable-tasks)
+- [API Reference](#api-reference)
+  - [Core Types](#core-types)
+  - [Utility Functions](#utility-functions)
+  - [Task Methods](#task-methods)
+- [Building and Testing](#building-and-testing)
+  - [Build Options](#build-options)
+  - [Running Tests](#running-tests)
+- [License](#license)
 
-## Requirements
+---
 
-- C++20 compatible compiler with coroutines support:
-  - **GCC 11+** (recommended) - Coroutines enabled by default with `-std=c++20`
-    - GCC 10 has experimental support but requires `-fcoroutines` flag and has known bugs
-  - **Clang 14+** (recommended) - Full C++20 coroutines support
-    - Clang 8-13 have partial support but not recommended for production
-  - **MSVC 19.28+** (Visual Studio 2019 16.8+) - Feature-complete C++20 coroutines
-    - Use `/std:c++20` or `/std:c++latest`
-  - **AppleClang 12+** - Full coroutines support
-- CMake 3.15 or later
+## Getting Started
+
+### Requirements
+
+C++20 compatible compiler with coroutines support:
+
+- **GCC 11+** (recommended) - Coroutines enabled by default with `-std=c++20`
+  - GCC 10 has experimental support but requires `-fcoroutines` flag and has known bugs
+- **Clang 14+** (recommended) - Full C++20 coroutines support
+  - Clang 8-13 have partial support but not recommended for production
+- **MSVC 19.28+** (Visual Studio 2019 16.8+) - Feature-complete C++20 coroutines
+  - Use `/std:c++20` or `/std:c++latest`
+- **AppleClang 12+** - Full coroutines support
+
+CMake 3.15 or later
+
+### Installation
+
+#### As Header-Only Library
+
+1. Copy the `include` directory to your project
+2. Add the include path to your compiler settings
+3. Include `TaskKit.h` in your code
+
+#### Using CMake
+
+```cmake
+add_subdirectory(TaskKit)
+target_link_libraries(your_target PRIVATE TaskKit)
+```
+
+---
 
 ## Quick Start
 
@@ -78,20 +119,54 @@ int main()
 }
 ```
 
-## Installation
+---
 
-### As Header-Only Library
+## Core Concepts
 
-1. Copy the `include` directory to your project
-2. Add the include path to your compiler settings
-3. Include `TaskKit.h` in your code
+### Task Lifecycle
 
-### Using CMake
+Tasks in TaskKit follow a simple lifecycle:
 
-```cmake
-add_subdirectory(TaskKit)
-target_link_libraries(your_target PRIVATE TaskKit)
+1. **Creation** - Task coroutine starts immediately (not suspended at entry)
+2. **Suspension** - `co_yield {}` or awaiting utilities schedules resumption on next frame
+3. **Completion** - `co_return` sets the result and resumes continuation
+4. **Forgotten Tasks** - `.Forget()` marks task for auto-destruction on completion (fire-and-forget)
+
+> **Note**: Tasks are move-only and marked with `[[nodiscard]]` to prevent accidental resource leaks.
+
+### TaskSystem and Schedulers
+
+**TaskSystem** uses thread-local storage for automatic thread isolation. Each thread maintains its own independent set of schedulers.
+
+**Key features:**
+- Must call `TaskSystem::Initialize()` once per thread before use
+- Schedulers are identified by unique IDs containing thread ID
+- `SchedulerRegistration` RAII guard manages current scheduler context
+- Thread-safe by design - no cross-thread scheduler access
+
+**Typical pattern:**
+
+```cpp
+// Initialize thread-local TaskSystem
+TaskSystem::Initialize();
+
+// Create scheduler
+auto id = TaskSystem::CreateScheduler();
+
+// Register as current (RAII guard)
+{
+    auto reg = TaskSystem::RegisterScheduler(id);
+
+    // Tasks created here use this scheduler
+    MyTask().Forget();
+
+} // Automatically unregistered
+
+// Cleanup
+TaskSystem::Shutdown();
 ```
+
+---
 
 ## Usage Examples
 
@@ -165,53 +240,154 @@ Task<> CancellableTask(std::stop_token stopToken)
 }
 ```
 
-## Building
-
-```bash
-# Configure
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-
-# Build
-cmake --build build
-
-# Build without samples
-cmake -B build -DBUILD_SAMPLES=OFF
-
-# Build without tests
-cmake -B build -DBUILD_TESTS=OFF
-```
-
-## Running Tests
-
-```bash
-# Run all tests
-ctest --test-dir build
-
-# Run specific test
-./build/bin/tests/TaskKit_tests --gtest_filter=TaskKitTest.DelayFrame*
-```
+---
 
 ## API Reference
 
 ### Core Types
 
-- `Task<T>` - Coroutine task type with optional return value
-- `TaskScheduler` - Frame-based scheduler for task execution
-- `TaskSystem` - Singleton managing multiple schedulers
+#### `Task<T>`
+
+The main coroutine type representing an asynchronous operation.
+
+- **Template parameter**: `T` - Return value type (use `Task<>` for void)
+- **Move-only**: Cannot be copied, only moved
+- **Eager execution**: Starts immediately upon creation
+
+#### `TaskScheduler`
+
+Frame-based scheduler managing coroutine execution.
+
+- `Update()` - Process all pending tasks for current frame
+- `GetPendingTaskCount()` - Returns number of tasks waiting to execute
+
+#### `TaskSystem`
+
+Static class managing multiple schedulers with thread-local storage.
+
+- `Initialize(config)` - Initialize thread-local state (required before use)
+- `Shutdown()` - Cleanup thread-local state
+- `CreateScheduler()` - Create new scheduler, returns ID
+- `DestroyScheduler(id)` - Remove scheduler
+- `RegisterScheduler(id)` - Returns RAII guard setting scheduler as current
+- `GetScheduler(id)` - Get scheduler by ID
+- `GetCurrentScheduler()` - Get currently active scheduler
 
 ### Utility Functions
 
-- `DelayFrame(int frames)` - Delay execution by frame count
-- `WaitFor(duration)` - Delay execution by time duration
-- `WaitUntil(timepoint)` - Delay until specific time point
-- `WhenAll(tasks...)` - Wait for multiple tasks concurrently
-- `GetCompletedTask()` - Get an immediately completed task
+#### `DelayFrame(int frames)`
+
+Suspends execution for specified number of frames.
+
+```cpp
+co_await DelayFrame(5);  // Wait 5 frames
+```
+
+#### `WaitFor(duration)`
+
+Suspends execution until duration elapsed.
+
+```cpp
+co_await WaitFor(2s);         // Wait 2 seconds
+co_await WaitFor(500ms);      // Wait 500 milliseconds
+```
+
+#### `WaitUntil(timepoint)`
+
+Suspends execution until specific time point reached.
+
+```cpp
+auto target = std::chrono::steady_clock::now() + 5s;
+co_await WaitUntil(target);
+```
+
+#### `WhenAll(tasks...)`
+
+Waits for multiple tasks to complete, returns tuple of results.
+
+```cpp
+auto [result1, result2] = co_await WhenAll(Task1(), Task2());
+```
+
+#### `GetCompletedTask()`
+
+Returns an immediately completed task (useful for conditional logic).
+
+```cpp
+co_await (condition ? ActualTask() : GetCompletedTask());
+```
 
 ### Task Methods
 
-- `.Forget()` - Fire-and-forget execution (auto-cleanup)
-- `.IsDone()` - Check if task completed
-- `.IsReady()` - Check if task result is ready
+#### `.Forget()`
+
+Marks task for fire-and-forget execution with automatic cleanup.
+
+```cpp
+MyBackgroundTask().Forget();
+```
+
+> **Important**: Without `.Forget()`, the task must be stored or awaited to prevent premature destruction.
+
+#### `.IsDone()`
+
+Checks if task has completed execution.
+
+```cpp
+auto task = MyTask();
+if (task.IsDone()) { /* ... */ }
+```
+
+#### `.IsReady()`
+
+Checks if task result is ready to retrieve.
+
+```cpp
+if (task.IsReady()) {
+    auto result = co_await task;
+}
+```
+
+---
+
+## Building and Testing
+
+### Build Options
+
+```bash
+# Configure with default options
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+# Build
+cmake --build build
+
+# Customize build
+cmake -B build \
+  -DBUILD_SAMPLES=OFF \  # Don't build samples
+  -DBUILD_TESTS=OFF \    # Don't build tests
+  -DUSE_GTEST=ON         # Use Google Test (default)
+```
+
+### Running Tests
+
+```bash
+# Run all tests with CTest
+ctest --test-dir build
+
+# Run test executable directly
+./build/bin/tests/TaskKit_tests
+
+# Run specific test with Google Test filter
+./build/bin/tests/TaskKit_tests --gtest_filter=TaskKitTest.DelayFrame*
+```
+
+### Running Samples
+
+```bash
+./build/bin/samples/QuickStart
+```
+
+---
 
 ## License
 
