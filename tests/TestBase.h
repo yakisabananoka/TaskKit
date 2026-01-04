@@ -13,26 +13,26 @@ namespace TKit::Tests
 	protected:
 		void SetUp() override
 		{
-			auto& taskSystem = TaskSystem::GetInstance();
-			schedulerId_ = taskSystem.CreateScheduler();
-			registration_ = taskSystem.RegisterScheduler(schedulerId_);
+			TaskSystem::Initialize();
+			schedulerId_ = TaskSystem::CreateScheduler();
+			registration_ = TaskSystem::RegisterScheduler(schedulerId_);
 		}
 
 		void TearDown() override
 		{
-			auto& taskSystem = TaskSystem::GetInstance();
-			auto& scheduler = taskSystem.GetScheduler(schedulerId_);
+			auto& scheduler = TaskSystem::GetScheduler(schedulerId_);
 
 			EXPECT_EQ(scheduler.GetPendingTaskCount(), 0)
 				<< "Test left " << scheduler.GetPendingTaskCount() << " pending tasks";
 
 			registration_ = TaskSystem::SchedulerRegistration();
-			taskSystem.DestroyScheduler(schedulerId_);
+			TaskSystem::DestroyScheduler(schedulerId_);
+			TaskSystem::Shutdown();
 		}
 
 		void RunScheduler(int frames = 1) const
 		{
-			auto& scheduler = TaskSystem::GetInstance().GetScheduler(schedulerId_);
+			auto& scheduler = TaskSystem::GetScheduler(schedulerId_);
 			for (int i = 0; i < frames; ++i)
 			{
 				scheduler.Update();
@@ -69,7 +69,7 @@ namespace TKit::Tests
 		}
 
 	private:
-		std::size_t schedulerId_ = 0;
+		TaskScheduler::Id schedulerId_;
 		TaskSystem::SchedulerRegistration registration_;
 	};
 }

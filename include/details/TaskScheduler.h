@@ -4,12 +4,29 @@
 #include <algorithm>
 #include <queue>
 #include <coroutine>
+#include <thread>
 
 namespace TKit
 {
 	class TaskScheduler final
 	{
 	public:
+		struct Id
+		{
+			std::thread::id threadId;
+			std::size_t internalId = 0;
+
+			bool operator==(const Id& other) const noexcept
+			{
+				return threadId == other.threadId && internalId == other.internalId;
+			}
+
+			bool operator!=(const Id& other) const noexcept
+			{
+				return !(*this == other);
+			}
+		};
+
 		TaskScheduler() = default;
 		~TaskScheduler()
 		{
