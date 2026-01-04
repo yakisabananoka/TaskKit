@@ -5,7 +5,7 @@
 C++20コルーチン向けの直感的で軽量なタスクシステムをフレームベーススケジューリングで提供します。
 
 <!-- LANG_LINKS_START -->
-**📖 Languages: [English](README.md) | [日本語](README_ja.md)**
+**Languages: [English](README.md) | [日本語](README_ja.md)**
 <!-- LANG_LINKS_END -->
 
 * **ヘッダーオンリーライブラリ** - 簡単に統合可能、インクルードするだけで使用可能
