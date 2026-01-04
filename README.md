@@ -4,6 +4,10 @@
 
 Provides an intuitive and lightweight task system with frame-based scheduling for C++20 coroutines.
 
+<!-- LANG_LINKS_START -->
+**📖 Languages: [English](README.md) | [日本語](README_ja.md)**
+<!-- LANG_LINKS_END -->
+
 * **Header-only library** - Easy integration, just include and use
 * **C++20 coroutines** - Modern async/await syntax with `co_await`
 * **Frame-based scheduling** - Perfect for game loops and real-time applications
