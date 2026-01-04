@@ -45,16 +45,17 @@ Task<> ExampleWhenAllTask()
 
 int main()
 {
-    const auto id = TaskSystem::CreateScheduler();
-    auto& scheduler = TaskSystem::GetScheduler(id);
+    TaskSystem::Initialize();
 
     {
+        const auto id = TaskSystem::CreateScheduler();
         auto registration = TaskSystem::RegisterScheduler(id);
         // Run different examples (uncomment to try)
         //ExampleDelayFrameTask().Forget();
         //ExampleDelayForTask().Forget();
         ExampleWhenAllTask().Forget();
 
+        auto& scheduler = TaskSystem::GetScheduler(id);
         while (scheduler.GetPendingTaskCount() > 0)
         {
             scheduler.Update();
@@ -64,5 +65,6 @@ int main()
         std::printf("All tasks completed.\n");
     }
 
+    TaskSystem::Shutdown();
     return 0;
 }

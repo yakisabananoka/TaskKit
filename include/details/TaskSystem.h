@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <stack>
 #include <unordered_map>
-#include <optional>
 #include "Exceptions.h"
 #include "TaskScheduler.h"
 #include "TaskSystemConfiguration.h"
@@ -13,51 +12,6 @@ namespace TKit
 {
 	class TaskSystem final
 	{
-	public:
-		static void Initialize(const TaskSystemConfiguration& config = TaskSystemConfiguration{})
-		{
-			ThrowIfInitialized();
-
-			auto& state = GetThreadState();
-			if (config.createDefaultScheduler)
-			{
-				std::size_t internalId = GetNextSchedulerId();
-				GetSchedulers().emplace(internalId, TaskScheduler{});
-				auto defaultId = CreateId(internalId);
-				GetInternalIdStack().push(internalId);
-				state.defaultSchedulerId = defaultId;
-			}
-
-			state.initialized = true;
-		}
-
-		static void Shutdown()
-		{
-			auto& state = GetThreadState();
-			if (!state.initialized)
-			{
-				throw std::runtime_error("TaskSystem not initialized for this thread");
-			}
-
-			// Clear the stack
-			while (!GetInternalIdStack().empty())
-			{
-				GetInternalIdStack().pop();
-			}
-
-			// Destroy all schedulers
-			GetSchedulers().clear();
-
-			state.initialized = false;
-			state.defaultSchedulerId = std::nullopt;
-		}
-
-		[[nodiscard]]
-		static bool IsInitialized()
-		{
-			return GetThreadState().initialized;
-		}
-
 	public:
 		struct SchedulerRegistration final
 		{
@@ -104,6 +58,40 @@ namespace TKit
 			bool valid_;
 		};
 
+		static void Initialize(const TaskSystemConfiguration& config = TaskSystemConfiguration{})
+		{
+			ThrowIfInitialized();
+
+			if (config.createDefaultScheduler)
+			{
+				std::size_t internalId = GetNextInternalId();
+				GetSchedulers().emplace(internalId, TaskScheduler{});
+				GetInternalIdStack().push(internalId);
+			}
+
+			GetThreadState().initialized = true;
+		}
+
+		static void Shutdown()
+		{
+			ThrowIfNotInitialized();
+
+			auto& stack = GetInternalIdStack();
+			while (!stack.empty())
+			{
+				stack.pop();
+			}
+
+			GetSchedulers().clear();
+			GetThreadState().initialized = false;
+		}
+
+		[[nodiscard]]
+		static bool IsInitialized()
+		{
+			return GetThreadState().initialized;
+		}
+
 		[[nodiscard]]
 		static TaskScheduler::Id GetCurrentSchedulerId()
 		{
@@ -126,7 +114,7 @@ namespace TKit
 		static TaskScheduler::Id CreateScheduler()
 		{
 			ThrowIfNotInitialized();
-			std::size_t internalId = GetNextSchedulerId();
+			std::size_t internalId = GetNextInternalId();
 			GetSchedulers().emplace(internalId, TaskScheduler{});
 			return CreateId(internalId);
 		}
@@ -155,7 +143,6 @@ namespace TKit
 		struct ThreadState
 		{
 			bool initialized = false;
-			std::optional<TaskScheduler::Id> defaultSchedulerId;
 		};
 
 		static ThreadState& GetThreadState()
@@ -164,7 +151,7 @@ namespace TKit
 			return state;
 		}
 
-		static std::size_t GetNextSchedulerId()
+		static std::size_t GetNextInternalId()
 		{
 			thread_local std::size_t nextId = 1;
 			return nextId++;

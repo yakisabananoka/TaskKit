@@ -11,6 +11,7 @@ namespace TKit::Tests
 	class TestBase : public ::testing::Test
 	{
 	protected:
+
 		void SetUp() override
 		{
 			TaskSystem::Initialize();
