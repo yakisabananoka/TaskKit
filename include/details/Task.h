@@ -143,7 +143,7 @@ namespace TKit
 		}
 
 		template<typename U>
-		typename Task<U>::Awaiter await_transform(Task<U>&& task) noexcept
+		Task<U>::Awaiter await_transform(Task<U>&& task) noexcept
 		{
 			return typename Task<U>::Awaiter{ std::move(task) };
 		}
