@@ -1,6 +1,6 @@
 # TaskKit
 
-[English](README.md) | [日本語](README.ja.md)
+[English](README.md) | [日本語](README_ja.md)
 
 ## 概要
 
@@ -52,21 +52,28 @@ Task<> ExampleTask()
 
 int main()
 {
-    auto& taskSystem = TaskSystem::GetInstance();
-    auto& scheduler = taskSystem.GetScheduler(
-        taskSystem.GetCurrentSchedulerId()
-    );
+    // TaskSystemを初期化（スレッドごとに1回）
+    TaskSystem::Initialize();
 
-    // タスクを開始（ファイア・アンド・フォーゲット）
-    ExampleTask().Forget();
-
-    // 毎フレームスケジューラーを更新
-    while (running)
     {
-        scheduler.Update();
-        std::this_thread::sleep_for(16ms); // 約60 FPS
+        // スケジューラーを作成して登録
+        auto id = TaskSystem::CreateScheduler();
+        auto registration = TaskSystem::RegisterScheduler(id);
+
+        // タスクを開始（ファイア・アンド・フォーゲット）
+        ExampleTask().Forget();
+
+        // 毎フレームスケジューラーを更新
+        auto& scheduler = TaskSystem::GetScheduler(id);
+        while (scheduler.GetPendingTaskCount() > 0)
+        {
+            scheduler.Update();
+            std::this_thread::sleep_for(16ms); // 約60 FPS
+        }
     }
 
+    // クリーンアップ
+    TaskSystem::Shutdown();
     return 0;
 }
 ```

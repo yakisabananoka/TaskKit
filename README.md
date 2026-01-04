@@ -1,6 +1,6 @@
 # TaskKit
 
-[English](README.md) | [日本語](README.ja.md)
+[English](README.md) | [日本語](README_ja.md)
 
 ## Overview
 
@@ -52,21 +52,28 @@ Task<> ExampleTask()
 
 int main()
 {
-    auto& taskSystem = TaskSystem::GetInstance();
-    auto& scheduler = taskSystem.GetScheduler(
-        taskSystem.GetCurrentSchedulerId()
-    );
+    // Initialize TaskSystem (once per thread)
+    TaskSystem::Initialize();
 
-    // Start the task (fire-and-forget)
-    ExampleTask().Forget();
-
-    // Update scheduler each frame
-    while (running)
     {
-        scheduler.Update();
-        std::this_thread::sleep_for(16ms); // ~60 FPS
+        // Create and register a scheduler
+        auto id = TaskSystem::CreateScheduler();
+        auto registration = TaskSystem::RegisterScheduler(id);
+
+        // Start the task (fire-and-forget)
+        ExampleTask().Forget();
+
+        // Update scheduler each frame
+        auto& scheduler = TaskSystem::GetScheduler(id);
+        while (scheduler.GetPendingTaskCount() > 0)
+        {
+            scheduler.Update();
+            std::this_thread::sleep_for(16ms); // ~60 FPS
+        }
     }
 
+    // Cleanup
+    TaskSystem::Shutdown();
     return 0;
 }
 ```
