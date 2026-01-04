@@ -1,6 +1,3 @@
-#include <chrono>
-#include <memory>
-#include <thread>
 #include "TestBase.h"
 
 namespace TKit::Tests

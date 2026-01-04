@@ -13,9 +13,6 @@ target_compile_features(TaskKit INTERFACE cxx_std_20)
 # Install configuration (optional)
 install(TARGETS TaskKit
     EXPORT TaskKitTargets
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    RUNTIME DESTINATION bin
     INCLUDES DESTINATION include
 )
 
