@@ -34,9 +34,6 @@ namespace TKit
 				return;
 			}
 
-			// If task has already reached final_suspend (IsReady() == true),
-			// we need to destroy it manually since FinalAwaiter's await_suspend
-			// has already been called and won't check isForgotten_ again
 			if (handle_.promise().IsReady())
 			{
 				handle_.destroy();
@@ -44,7 +41,6 @@ namespace TKit
 				return;
 			}
 
-			// Task is still running, mark as forgotten so FinalAwaiter will destroy it
 			handle_.promise().MarkAsForgotten();
 			handle_ = nullptr;
 		}
