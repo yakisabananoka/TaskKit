@@ -1,11 +1,14 @@
 ﻿#ifndef TASKKIT_TASKSYSTEMCONFIGURATION_H
 #define TASKKIT_TASKSYSTEMCONFIGURATION_H
 
+#include "TaskAllocator.h"
+
 namespace TKit
 {
 	struct TaskSystemConfiguration
 	{
-		bool createDefaultScheduler = true;
+		bool createDefaultScheduler;
+		std::optional<TaskAllocator> allocator;
 	};
 
 	class TaskSystemConfigurationBuilder
@@ -13,19 +16,26 @@ namespace TKit
 	public:
 		TaskSystemConfigurationBuilder() = default;
 
-		TaskSystemConfigurationBuilder& WithDefaultScheduler(bool create)
+		TaskSystemConfigurationBuilder& WithDefaultScheduler(bool createDefault)
 		{
-			config_.createDefaultScheduler = create;
+			configuration_.createDefaultScheduler = createDefault;
 			return *this;
 		}
 
+		TaskSystemConfigurationBuilder& WithCustomAllocator(const TaskAllocator& allocator)
+		{
+			configuration_.allocator = allocator;
+			return *this;
+		}
+
+		[[nodiscard]]
 		TaskSystemConfiguration Build() const
 		{
-			return config_;
+			return configuration_;
 		}
 
 	private:
-		TaskSystemConfiguration config_;
+		TaskSystemConfiguration configuration_;
 	};
 }
 

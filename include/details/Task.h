@@ -3,6 +3,7 @@
 
 #include <coroutine>
 #include <variant>
+#include <cstdio>
 #include "PromiseBase.h"
 #include "TaskSystem.h"
 
@@ -28,6 +29,22 @@ namespace TKit
 
 		void Forget() &&
 		{
+			if (!handle_)
+			{
+				return;
+			}
+
+			// If task has already reached final_suspend (IsReady() == true),
+			// we need to destroy it manually since FinalAwaiter's await_suspend
+			// has already been called and won't check isForgotten_ again
+			if (handle_.promise().IsReady())
+			{
+				handle_.destroy();
+				handle_ = nullptr;
+				return;
+			}
+
+			// Task is still running, mark as forgotten so FinalAwaiter will destroy it
 			handle_.promise().MarkAsForgotten();
 			handle_ = nullptr;
 		}
@@ -126,6 +143,27 @@ namespace TKit
 	class Task<T>::Promise final : public PromiseBase<T>
 	{
 	public:
+		void* operator new(std::size_t size)
+		{
+			if (!TaskSystem::IsInitialized())
+			{
+				return ::operator new(size);
+			}
+
+			return TaskSystem::GetAllocator().Allocate(size);
+		}
+
+		void operator delete(void* ptr, std::size_t size) noexcept
+		{
+			if (!TaskSystem::IsInitialized())
+			{
+				::operator delete(ptr, size);
+				return;
+			}
+
+			TaskSystem::GetAllocator().Deallocate(ptr, size);
+		}
+
 		[[nodiscard]]
 		std::coroutine_handle<> GetContinuation() const noexcept
 		{

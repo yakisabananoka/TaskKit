@@ -7,9 +7,13 @@
 #include "Exceptions.h"
 #include "TaskScheduler.h"
 #include "TaskSystemConfiguration.h"
+#include "PoolAllocator.h"
 
 namespace TKit
 {
+	template<typename T>
+	class Task;
+
 	class TaskSystem final
 	{
 	public:
@@ -62,6 +66,19 @@ namespace TKit
 		{
 			ThrowIfInitialized();
 
+			auto& state = GetThreadState();
+
+			state.useDefaultAllocator = !config.allocator.has_value();
+			if (state.useDefaultAllocator)
+			{
+				auto* poolAllocator = new PoolAllocator();
+				state.allocator = poolAllocator->CreateTaskAllocator();
+			}
+			else
+			{
+				state.allocator = config.allocator.value();
+			}
+
 			if (config.createDefaultScheduler)
 			{
 				std::size_t internalId = GetNextInternalId();
@@ -69,21 +86,21 @@ namespace TKit
 				GetInternalIdStack().push(internalId);
 			}
 
-			GetThreadState().initialized = true;
+			state.initialized = true;
 		}
 
 		static void Shutdown()
 		{
 			ThrowIfNotInitialized();
 
-			auto& stack = GetInternalIdStack();
-			while (!stack.empty())
+			auto& state = GetThreadState();
+			if (state.useDefaultAllocator)
 			{
-				stack.pop();
+				auto* poolAllocator = static_cast<PoolAllocator*>(GetAllocator().GetContext());
+				delete poolAllocator;
 			}
 
-			GetSchedulers().clear();
-			GetThreadState().initialized = false;
+			state = ThreadState{};
 		}
 
 		[[nodiscard]]
@@ -101,7 +118,7 @@ namespace TKit
 			{
 				throw std::runtime_error("No scheduler registered in current context");
 			}
-			return CreateId(stack.top());
+			return GetSchedulerId(stack.top());
 		}
 
 		[[nodiscard]]
@@ -111,25 +128,25 @@ namespace TKit
 		}
 
 		[[nodiscard]]
+		static TaskScheduler& GetScheduler(const TaskScheduler::Id& id)
+		{
+			ThrowIfInvalidId(id);
+			return GetSchedulers().at(id.internalId);
+		}
+
+		[[nodiscard]]
 		static TaskScheduler::Id CreateScheduler()
 		{
 			ThrowIfNotInitialized();
 			std::size_t internalId = GetNextInternalId();
 			GetSchedulers().emplace(internalId, TaskScheduler{});
-			return CreateId(internalId);
+			return GetSchedulerId(internalId);
 		}
 
 		static void DestroyScheduler(const TaskScheduler::Id& id)
 		{
 			ThrowIfInvalidId(id);
 			GetSchedulers().erase(id.internalId);
-		}
-
-		[[nodiscard]]
-		static TaskScheduler& GetScheduler(const TaskScheduler::Id& id)
-		{
-			ThrowIfInvalidId(id);
-			return GetSchedulers().at(id.internalId);
 		}
 
 		[[nodiscard]]
@@ -142,34 +159,47 @@ namespace TKit
 	private:
 		struct ThreadState
 		{
+			TaskAllocator allocator;
+			std::size_t nextInternalId = 1;
+			std::stack<std::size_t> internalIdStack;
+			std::unordered_map<std::size_t, TaskScheduler> schedulers;
 			bool initialized = false;
+			bool useDefaultAllocator = true;
 		};
 
+		[[nodiscard]]
 		static ThreadState& GetThreadState()
 		{
 			thread_local ThreadState state;
 			return state;
 		}
 
+		[[nodiscard]]
 		static std::size_t GetNextInternalId()
 		{
-			thread_local std::size_t nextId = 1;
-			return nextId++;
+			return GetThreadState().nextInternalId++;
 		}
 
+		[[nodiscard]]
 		static std::stack<std::size_t>& GetInternalIdStack()
 		{
-			thread_local std::stack<std::size_t> internalIdStack;
-			return internalIdStack;
+			return GetThreadState().internalIdStack;
 		}
 
+		[[nodiscard]]
 		static std::unordered_map<std::size_t, TaskScheduler>& GetSchedulers()
 		{
-			thread_local std::unordered_map<std::size_t, TaskScheduler> schedulers;
-			return schedulers;
+			return GetThreadState().schedulers;
 		}
 
-		static TaskScheduler::Id CreateId(std::size_t internalId)
+		[[nodiscard]]
+		static TaskAllocator& GetAllocator()
+		{
+			ThrowIfNotInitialized();
+			return GetThreadState().allocator;
+		}
+
+		static TaskScheduler::Id GetSchedulerId(std::size_t internalId)
 		{
 			return TaskScheduler::Id
 			{
@@ -180,15 +210,14 @@ namespace TKit
 
 		static bool ValidateId(const TaskScheduler::Id& id)
 		{
-			return std::this_thread::get_id() == id.threadId &&
-				GetSchedulers().contains(id.internalId);
+			return std::this_thread::get_id() == id.threadId && GetSchedulers().contains(id.internalId);
 		}
 
 		static void ThrowIfInvalidId(const TaskScheduler::Id& id)
 		{
 			if (!ValidateId(id))
 			{
-				throw InvalidSchedulerIdError();
+				throw InvalidSchedulerIdError(id);
 			}
 		}
 
@@ -209,6 +238,9 @@ namespace TKit
 		}
 
 		TaskSystem() = default;
+
+		template <typename T>
+		friend class Task;
 	};
 }
 

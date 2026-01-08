@@ -14,6 +14,8 @@ Provides an intuitive and lightweight task system with frame-based scheduling fo
 * **Time-based delays** - Support for both frame delays (`DelayFrame`) and duration-based waits (`WaitFor`)
 * **Task composition** - Combine multiple tasks with `WhenAll`
 * **Thread-local by design** - Automatic thread safety through thread-local storage
+* **Efficient memory allocation** - Pool allocator reduces heap overhead for coroutine frames
+* **Customizable allocators** - Bring your own allocator for fine-grained control
 * **Zero dependencies** - Only requires C++20 standard library
 
 ---
@@ -30,6 +32,7 @@ Provides an intuitive and lightweight task system with frame-based scheduling fo
   - [Task with Return Value](#task-with-return-value)
   - [Concurrent Tasks](#concurrent-tasks)
   - [Cancellable Tasks](#cancellable-tasks)
+  - [Custom Allocators](#custom-allocators)
 - [API Reference](#api-reference)
   - [Core Types](#core-types)
   - [Utility Functions](#utility-functions)
@@ -243,6 +246,40 @@ Task<> CancellableTask(std::stop_token stopToken)
     }
 }
 ```
+
+### Custom Allocators
+
+```cpp
+// Define custom allocator for coroutine frames
+struct MyAllocatorContext {
+    // Your allocator state
+};
+
+MyAllocatorContext myContext;
+
+TaskAllocator myAllocator{
+    &myContext,
+    [](void* ctx, std::size_t size) -> void* {
+        // Custom allocation
+        auto* context = static_cast<MyAllocatorContext*>(ctx);
+        return myCustomAlloc(context, size);
+    },
+    [](void* ctx, void* ptr, std::size_t size) {
+        // Custom deallocation
+        auto* context = static_cast<MyAllocatorContext*>(ctx);
+        myCustomFree(context, ptr, size);
+    }
+};
+
+// Initialize TaskSystem with custom allocator
+auto config = TaskSystemConfigurationBuilder()
+    .WithCustomAllocator(myAllocator)
+    .Build();
+
+TaskSystem::Initialize(config);
+```
+
+> **Note**: By default, TaskKit uses an efficient pool allocator that reduces heap allocation overhead. Custom allocators are useful for memory tracking, debugging, or integration with existing memory management systems.
 
 ---
 

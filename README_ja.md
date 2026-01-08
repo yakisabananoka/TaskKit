@@ -14,6 +14,8 @@ C++20コルーチン向けの直感的で軽量なタスクシステムをフレ
 * **時間ベースの遅延** - フレーム遅延（`DelayFrame`）と時間ベースの待機（`WaitFor`）の両方をサポート
 * **タスク合成** - `WhenAll`で複数のタスクを結合
 * **設計段階からのスレッドローカル** - スレッドローカルストレージによる自動スレッドセーフティ
+* **効率的なメモリ確保** - プールアロケータによりコルーチンフレームのヒープオーバーヘッドを削減
+* **カスタマイズ可能なアロケータ** - 独自のアロケータで細かい制御が可能
 * **依存関係ゼロ** - C++20標準ライブラリのみを必要とします
 
 ---
@@ -30,6 +32,7 @@ C++20コルーチン向けの直感的で軽量なタスクシステムをフレ
   - [戻り値を持つタスク](#戻り値を持つタスク)
   - [並行タスク](#並行タスク)
   - [キャンセル可能なタスク](#キャンセル可能なタスク)
+  - [カスタムアロケータ](#カスタムアロケータ)
 - [APIリファレンス](#apiリファレンス)
   - [コア型](#コア型)
   - [ユーティリティ関数](#ユーティリティ関数)
@@ -243,6 +246,40 @@ Task<> CancellableTask(std::stop_token stopToken)
     }
 }
 ```
+
+### カスタムアロケータ
+
+```cpp
+// コルーチンフレーム用のカスタムアロケータを定義
+struct MyAllocatorContext {
+    // アロケータの状態
+};
+
+MyAllocatorContext myContext;
+
+TaskAllocator myAllocator{
+    &myContext,
+    [](void* ctx, std::size_t size) -> void* {
+        // カスタム確保
+        auto* context = static_cast<MyAllocatorContext*>(ctx);
+        return myCustomAlloc(context, size);
+    },
+    [](void* ctx, void* ptr, std::size_t size) {
+        // カスタム解放
+        auto* context = static_cast<MyAllocatorContext*>(ctx);
+        myCustomFree(context, ptr, size);
+    }
+};
+
+// カスタムアロケータでTaskSystemを初期化
+auto config = TaskSystemConfigurationBuilder()
+    .WithCustomAllocator(myAllocator)
+    .Build();
+
+TaskSystem::Initialize(config);
+```
+
+> **注意**: デフォルトでは、TaskKitはヒープ確保のオーバーヘッドを削減する効率的なプールアロケータを使用します。カスタムアロケータは、メモリトラッキング、デバッグ、または既存のメモリ管理システムとの統合に便利です。
 
 ---
 
