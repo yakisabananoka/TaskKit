@@ -33,6 +33,8 @@ C++20コルーチン向けの直感的で軽量なタスクシステムをフレ
   - [並行タスク](#並行タスク)
   - [キャンセル可能なタスク](#キャンセル可能なタスク)
   - [カスタムアロケータ](#カスタムアロケータ)
+- [高度な機能](#高度な機能)
+  - [カスタム待機可能型](#カスタム待機可能型)
 - [APIリファレンス](#apiリファレンス)
   - [コア型](#コア型)
   - [ユーティリティ関数](#ユーティリティ関数)
@@ -280,6 +282,90 @@ TaskSystem::Initialize(config);
 ```
 
 > **注意**: デフォルトでは、TaskKitはヒープ確保のオーバーヘッドを削減する効率的なプールアロケータを使用します。カスタムアロケータは、メモリトラッキング、デバッグ、または既存のメモリ管理システムとの統合に便利です。
+
+---
+
+## 高度な機能
+
+### カスタム待機可能型
+
+TaskKitは、`CustomAwaitTransformer`を使用してカスタム型をTaskコルーチン内で待機可能にする拡張メカニズムを提供します。
+
+**仕組み:**
+
+`CustomAwaitTransformer`テンプレートを使用して、カスタム型の変換ロジックを特殊化できます。Taskが`co_await yourCustomType`に遭遇すると、`CustomAwaitTransformer<YourType>::Transform()`を呼び出して待機可能なオブジェクトに変換します。
+
+**例:**
+
+```cpp
+// カスタム型
+struct MyCustomEvent
+{
+    int eventId;
+    std::string eventData;
+};
+
+// カスタム型に対してCustomAwaitTransformerを特殊化
+namespace TKit
+{
+    template<>
+    struct CustomAwaitTransformer<MyCustomEvent>
+    {
+        static auto Transform(MyCustomEvent&& event)
+        {
+            // カスタム型を処理する awaiter を返す
+            struct Awaiter
+            {
+                MyCustomEvent event;
+
+                bool await_ready() const noexcept { return false; }
+
+                void await_suspend(std::coroutine_handle<> handle)
+                {
+                    // カスタム中断ロジック
+                    // 例: イベントハンドラの登録、コールバックのスケジューリングなど
+                }
+
+                MyCustomEvent await_resume()
+                {
+                    return std::move(event);
+                }
+            };
+
+            return Awaiter{ std::move(event) };
+        }
+    };
+}
+
+// これでTaskで使用できます
+Task<> ProcessEvent()
+{
+    MyCustomEvent event{ 42, "data" };
+
+    // カスタム型が待機可能になりました！
+    auto result = co_await event;
+
+    std::printf("Processed event: %d\n", result.eventId);
+}
+```
+
+**要件:**
+
+1. `TKit`名前空間内で`CustomAwaitTransformer<T>`を特殊化する
+2. 自分の型を受け入れる静的な`Transform()`メソッドを提供する
+3. 標準的なawaiterインターフェースを持つawaiterオブジェクトを返す:
+   - `await_ready()` - 結果が即座に利用可能な場合にtrueを返す
+   - `await_suspend(handle)` - コルーチンが中断されるときに呼び出される
+   - `await_resume()` - コルーチンが再開されるときに結果を返す
+
+**使用例:**
+
+- イベントシステムとの統合（UIイベント、ネットワークイベント）
+- コールバックベースのAPIをコルーチンで動作するようにラップ
+- カスタム同期プリミティブ
+- ドメイン固有の非同期操作
+
+> **注意**: `CustomAwaitable`コンセプトは、有効な`CustomAwaitTransformer`特殊化を持つ型を自動的に検出します。
 
 ---
 

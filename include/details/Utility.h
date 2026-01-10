@@ -194,6 +194,17 @@ namespace TKit
 
 		co_return result->value().index();
 	}
+
+	template<typename Rep, typename Period>
+	class CustomAwaitTransformer<std::chrono::duration<Rep, Period>>
+	{
+	public:
+		static auto Transform(const std::chrono::duration<Rep, Period>& duration) noexcept
+		{
+			return Task<>::Awaiter{ WaitFor(duration) };
+		}
+	};
+
 }
 
 #endif //TASKKIT_UTILITY_H

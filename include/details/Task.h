@@ -6,6 +6,7 @@
 #include <cstdio>
 #include "PromiseBase.h"
 #include "TaskSystem.h"
+#include "CustomAwaitTransformer.h"
 
 namespace TKit
 {
@@ -180,6 +181,12 @@ namespace TKit
 		Task<U>::Awaiter await_transform(Task<U>&& task) noexcept
 		{
 			return typename Task<U>::Awaiter{ std::move(task) };
+		}
+
+		template<CustomAwaitable Awaitable>
+		auto await_transform(Awaitable&& awaitable) noexcept
+		{
+			return CustomAwaitTransformer<std::decay_t<Awaitable>>::Transform(std::forward<Awaitable>(awaitable));
 		}
 
 		auto get_return_object()

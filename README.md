@@ -33,6 +33,8 @@ Provides an intuitive and lightweight task system with frame-based scheduling fo
   - [Concurrent Tasks](#concurrent-tasks)
   - [Cancellable Tasks](#cancellable-tasks)
   - [Custom Allocators](#custom-allocators)
+- [Advanced Features](#advanced-features)
+  - [Custom Awaitable Types](#custom-awaitable-types)
 - [API Reference](#api-reference)
   - [Core Types](#core-types)
   - [Utility Functions](#utility-functions)
@@ -280,6 +282,90 @@ TaskSystem::Initialize(config);
 ```
 
 > **Note**: By default, TaskKit uses an efficient pool allocator that reduces heap allocation overhead. Custom allocators are useful for memory tracking, debugging, or integration with existing memory management systems.
+
+---
+
+## Advanced Features
+
+### Custom Awaitable Types
+
+TaskKit provides an extensibility mechanism to make custom types awaitable within Task coroutines using `CustomAwaitTransformer`.
+
+**How it works:**
+
+The `CustomAwaitTransformer` template allows you to specialize transformation logic for your custom types. When a Task encounters `co_await yourCustomType`, it will call `CustomAwaitTransformer<YourType>::Transform()` to convert it into an awaitable object.
+
+**Example:**
+
+```cpp
+// Your custom type
+struct MyCustomEvent
+{
+    int eventId;
+    std::string eventData;
+};
+
+// Specialize CustomAwaitTransformer for your type
+namespace TKit
+{
+    template<>
+    struct CustomAwaitTransformer<MyCustomEvent>
+    {
+        static auto Transform(MyCustomEvent&& event)
+        {
+            // Return an awaiter that handles your custom type
+            struct Awaiter
+            {
+                MyCustomEvent event;
+
+                bool await_ready() const noexcept { return false; }
+
+                void await_suspend(std::coroutine_handle<> handle)
+                {
+                    // Custom suspension logic
+                    // e.g., register event handler, schedule callback, etc.
+                }
+
+                MyCustomEvent await_resume()
+                {
+                    return std::move(event);
+                }
+            };
+
+            return Awaiter{ std::move(event) };
+        }
+    };
+}
+
+// Now you can use it in Tasks
+Task<> ProcessEvent()
+{
+    MyCustomEvent event{ 42, "data" };
+
+    // Your custom type is now awaitable!
+    auto result = co_await event;
+
+    std::printf("Processed event: %d\n", result.eventId);
+}
+```
+
+**Requirements:**
+
+1. Specialize `CustomAwaitTransformer<T>` in the `TKit` namespace
+2. Provide a static `Transform()` method that accepts your type
+3. Return an awaiter object with standard awaiter interface:
+   - `await_ready()` - Returns true if result is immediately available
+   - `await_suspend(handle)` - Called when coroutine suspends
+   - `await_resume()` - Returns the result when coroutine resumes
+
+**Use cases:**
+
+- Integrating with event systems (UI events, network events)
+- Wrapping callback-based APIs to work with coroutines
+- Custom synchronization primitives
+- Domain-specific async operations
+
+> **Note**: The `CustomAwaitable` concept automatically detects types that have a valid `CustomAwaitTransformer` specialization.
 
 ---
 
