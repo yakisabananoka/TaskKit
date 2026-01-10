@@ -2,7 +2,7 @@
 #define TASKKIT_EXCEPTIONS_H
 #include <format>
 #include <utility>
-#include "TaskScheduler.h"
+#include "TaskSchedulerId.h"
 
 namespace TKit
 {
@@ -27,8 +27,8 @@ namespace TKit
 	class InvalidSchedulerIdError final : public TaskKitError
 	{
 	public:
-		explicit InvalidSchedulerIdError(const TaskScheduler::Id& id) :
-			TaskKitError(std::format("Invalid TaskScheduler Id: internalId={}", id.internalId))
+		explicit InvalidSchedulerIdError(const TaskSchedulerId& id) :
+			TaskKitError(std::format("Invalid TaskScheduler Id: internalId={}", id.GetInternalId()))
 		{
 		}
 	};

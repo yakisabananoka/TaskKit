@@ -70,7 +70,7 @@ namespace TKit::Tests
 		}
 
 	private:
-		TaskScheduler::Id schedulerId_;
+		TaskSchedulerId schedulerId_;
 		TaskSystem::SchedulerRegistration registration_;
 	};
 }

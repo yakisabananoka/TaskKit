@@ -5,7 +5,7 @@ namespace TKit::Tests
 	class AllocatorTests : public ::testing::Test
 	{
 	protected:
-		static void CheckPendingTasksAreZero(const TaskScheduler::Id& schedulerId)
+		static void CheckPendingTasksAreZero(const TaskSchedulerId& schedulerId)
 		{
 			const auto& scheduler = TaskSystem::GetScheduler(schedulerId);
 			EXPECT_EQ(scheduler.GetPendingTaskCount(), 0)
