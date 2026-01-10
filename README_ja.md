@@ -2,21 +2,21 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-C++20コルーチン向けの直感的で軽量なタスクシステムをフレームベーススケジューリングで提供します。
+C++20コルーチン向けの直感的で軽量なタスクシステムを、フレームベーススケジューリングで提供します。
 
 <!-- LANG_LINKS_START -->
 **Languages: [English](README.md) | [日本語](README_ja.md)**
 <!-- LANG_LINKS_END -->
 
-* **ヘッダーオンリーライブラリ** - 簡単に統合可能、インクルードするだけで使用可能
+* **ヘッダーオンリーライブラリ** - 簡単に統合でき、インクルードするだけで使えます
 * **C++20コルーチン** - `co_await`によるモダンなasync/await構文
 * **フレームベーススケジューリング** - ゲームループやリアルタイムアプリケーションに最適
 * **時間ベースの遅延** - フレーム遅延（`DelayFrame`）と時間ベースの待機（`WaitFor`）の両方をサポート
-* **タスク合成** - `WhenAll`で複数のタスクを結合
-* **設計段階からのスレッドローカル** - スレッドローカルストレージによる自動スレッドセーフティ
-* **効率的なメモリ確保** - プールアロケータによりコルーチンフレームのヒープオーバーヘッドを削減
-* **カスタマイズ可能なアロケータ** - 独自のアロケータで細かい制御が可能
-* **依存関係ゼロ** - C++20標準ライブラリのみを必要とします
+* **タスク合成** - `WhenAll`で複数のタスクを組み合わせ可能
+* **スレッドローカル設計** - スレッドローカルストレージによる自動スレッドセーフティ
+* **効率的なメモリ確保** - プールアロケータでコルーチンフレームのヒープオーバーヘッドを削減
+* **カスタマイズ可能なアロケータ** - 独自のアロケータで細かく制御可能
+* **依存関係ゼロ** - C++20標準ライブラリのみが必要
 
 ---
 
@@ -34,7 +34,7 @@ C++20コルーチン向けの直感的で軽量なタスクシステムをフレ
   - [キャンセル可能なタスク](#キャンセル可能なタスク)
   - [カスタムアロケータ](#カスタムアロケータ)
 - [高度な機能](#高度な機能)
-  - [カスタム待機可能型](#カスタム待機可能型)
+  - [カスタムAwaitable型](#カスタムawaitable型)
 - [APIリファレンス](#apiリファレンス)
   - [コア型](#コア型)
   - [ユーティリティ関数](#ユーティリティ関数)
@@ -50,14 +50,14 @@ C++20コルーチン向けの直感的で軽量なタスクシステムをフレ
 
 ### 必要要件
 
-C++20コルーチンサポートを持つコンパイラ:
+C++20コルーチンをサポートするコンパイラが必要です：
 
-- **GCC 11以降**（推奨） - `-std=c++20`でコルーチンがデフォルトで有効化
+- **GCC 11以降**（推奨） - `-std=c++20`でコルーチンがデフォルトで有効化されます
   - GCC 10は実験的サポートですが、`-fcoroutines`フラグが必要で既知のバグがあります
 - **Clang 14以降**（推奨） - 完全なC++20コルーチンサポート
   - Clang 8-13は部分的サポートですが、本番環境では推奨されません
-- **MSVC 19.28以降**（Visual Studio 2019 16.8以降） - フィーチャー完全なC++20コルーチン
-  - `/std:c++20`または`/std:c++latest`を使用
+- **MSVC 19.28以降**（Visual Studio 2019 16.8以降） - 機能完全なC++20コルーチン
+  - `/std:c++20`または`/std:c++latest`を使用してください
 - **AppleClang 12以降** - 完全なコルーチンサポート
 
 CMake 3.15以降
@@ -66,9 +66,9 @@ CMake 3.15以降
 
 #### ヘッダーオンリーライブラリとして
 
-1. `include`ディレクトリをプロジェクトにコピー
-2. コンパイラ設定にインクルードパスを追加
-3. コード内で`TaskKit.h`をインクルード
+1. `include`ディレクトリをプロジェクトにコピーします
+2. コンパイラ設定にインクルードパスを追加します
+3. コード内で`TaskKit.h`をインクルードします
 
 #### CMakeを使用
 
@@ -106,14 +106,14 @@ int main()
     TaskSystem::Initialize();
 
     {
-        // スケジューラーを作成して登録
+        // スケジューラを作成して登録
         auto id = TaskSystem::CreateScheduler();
         auto registration = TaskSystem::RegisterScheduler(id);
 
         // タスクを開始（ファイア・アンド・フォーゲット）
         ExampleTask().Forget();
 
-        // 毎フレームスケジューラーを更新
+        // 毎フレームスケジューラを更新
         auto& scheduler = TaskSystem::GetScheduler(id);
         while (scheduler.GetPendingTaskCount() > 0)
         {
@@ -134,24 +134,24 @@ int main()
 
 ### タスクのライフサイクル
 
-TaskKitのタスクはシンプルなライフサイクルに従います：
+TaskKitのタスクは、シンプルなライフサイクルに従います：
 
-1. **作成** - タスクコルーチンは即座に開始（エントリで中断されない）
-2. **中断** - `co_yield {}`またはユーティリティのawaitにより次フレームでの再開がスケジュールされる
-3. **完了** - `co_return`が結果を設定し、継続を再開
-4. **忘れられたタスク** - `.Forget()`が完了時の自動破棄をマーク（ファイア・アンド・フォーゲット）
+1. **作成** - タスクコルーチンは即座に開始されます（エントリ時点では中断されません）
+2. **中断** - `co_yield {}`またはユーティリティ関数のawaitにより、次フレームでの再開がスケジュールされます
+3. **完了** - `co_return`が結果を設定し、継続処理を再開します
+4. **忘れられたタスク** - `.Forget()`により、完了時に自動的に破棄されます（ファイア・アンド・フォーゲット）
 
-> **注意**: タスクはムーブオンリーで、`[[nodiscard]]`でマークされており、偶発的なリソースリークを防ぎます。
+> **注意**: タスクはムーブオンリーで、`[[nodiscard]]`でマークされており、意図しないリソースリークを防ぎます。
 
 ### TaskSystemとScheduler
 
-**TaskSystem**はスレッドローカルストレージを使用して自動的にスレッド分離を行います。各スレッドは独自の独立したスケジューラセットを維持します。
+**TaskSystem**は、スレッドローカルストレージを使用して自動的にスレッド分離を行います。各スレッドは独立したスケジューラのセットを保持します。
 
 **主な特徴:**
 - 使用前にスレッドごとに`TaskSystem::Initialize()`を呼び出す必要があります
 - スケジューラはスレッドIDを含む一意のIDで識別されます
-- `SchedulerRegistration` RAIIガードが現在のスケジューラコンテキストを管理
-- 設計段階からスレッドセーフ - クロススレッドスケジューラアクセスは不可
+- `SchedulerRegistration` RAIIガードが現在のスケジューラコンテキストを管理します
+- スレッドセーフな設計 - 異なるスレッド間でのスケジューラアクセスはできません
 
 **典型的なパターン:**
 
@@ -159,17 +159,17 @@ TaskKitのタスクはシンプルなライフサイクルに従います：
 // スレッドローカルTaskSystemを初期化
 TaskSystem::Initialize();
 
-// スケジューラーを作成
+// スケジューラを作成
 auto id = TaskSystem::CreateScheduler();
 
-// 現在として登録（RAIIガード）
+// 現在のスケジューラとして登録（RAIIガード）
 {
     auto reg = TaskSystem::RegisterScheduler(id);
 
-    // ここで作成されたタスクはこのスケジューラを使用
+    // ここで作成されたタスクはこのスケジューラを使用します
     MyTask().Forget();
 
-} // 自動的に登録解除
+} // 自動的に登録解除されます
 
 // クリーンアップ
 TaskSystem::Shutdown();
@@ -287,25 +287,25 @@ TaskSystem::Initialize(config);
 
 ## 高度な機能
 
-### カスタム待機可能型
+### カスタムAwaitable型
 
-TaskKitは、`AwaitTransformer`を使用してカスタム型をTaskコルーチン内で待機可能にする拡張メカニズムを提供します。
+TaskKitは、`AwaitTransformer`を使用して独自の型をTaskコルーチン内でawait可能にする拡張メカニズムを提供します。
 
 **仕組み:**
 
-`AwaitTransformer`テンプレートを使用して、カスタム型の変換ロジックを特殊化できます。Taskが`co_await yourCustomType`に遭遇すると、`AwaitTransformer<YourType>::Transform()`を呼び出して待機可能なオブジェクトに変換します。
+`AwaitTransformer`テンプレートを特殊化することで、独自の型に対する変換ロジックを定義できます。Task内で`co_await yourCustomType`を使用すると、`AwaitTransformer<YourType>::Transform()`が呼び出され、awaitable型に変換されます。
 
 **例:**
 
 ```cpp
-// カスタム型
+// 独自の型
 struct MyCustomEvent
 {
     int eventId;
     std::string eventData;
 };
 
-// カスタム型に対してAwaitTransformerを特殊化
+// 独自の型に対してAwaitTransformerを特殊化
 namespace TKit
 {
     template<>
@@ -313,7 +313,7 @@ namespace TKit
     {
         static auto Transform(MyCustomEvent&& event)
         {
-            // カスタム型を処理する awaiter を返す
+            // この型を処理するawaiterを返す
             struct Awaiter
             {
                 MyCustomEvent event;
@@ -322,7 +322,7 @@ namespace TKit
 
                 void await_suspend(std::coroutine_handle<> handle)
                 {
-                    // カスタム中断ロジック
+                    // 独自の中断処理
                     // 例: イベントハンドラの登録、コールバックのスケジューリングなど
                 }
 
@@ -337,12 +337,12 @@ namespace TKit
     };
 }
 
-// これでTaskで使用できます
+// これでTask内で使用できます
 Task<> ProcessEvent()
 {
     MyCustomEvent event{ 42, "data" };
 
-    // カスタム型が待機可能になりました！
+    // 独自の型がawait可能になりました
     auto result = co_await event;
 
     std::printf("Processed event: %d\n", result.eventId);
@@ -351,18 +351,18 @@ Task<> ProcessEvent()
 
 **要件:**
 
-1. `TKit`名前空間内で`AwaitTransformer<T>`を特殊化する
-2. 自分の型を受け入れる静的な`Transform()`メソッドを提供する
-3. 標準的なawaiterインターフェースを持つawaiterオブジェクトを返す:
-   - `await_ready()` - 結果が即座に利用可能な場合にtrueを返す
-   - `await_suspend(handle)` - コルーチンが中断されるときに呼び出される
-   - `await_resume()` - コルーチンが再開されるときに結果を返す
+1. `TKit`名前空間内で`AwaitTransformer<T>`を特殊化します
+2. その型を受け取る静的な`Transform()`メソッドを提供します
+3. 標準的なawaiterインターフェースを持つオブジェクトを返します:
+   - `await_ready()` - 結果が即座に利用可能な場合にtrueを返します
+   - `await_suspend(handle)` - コルーチンが中断されるときに呼び出されます
+   - `await_resume()` - コルーチンが再開されるときに結果を返します
 
-**使用例:**
+**ユースケース:**
 
 - イベントシステムとの統合（UIイベント、ネットワークイベント）
-- コールバックベースのAPIをコルーチンで動作するようにラップ
-- カスタム同期プリミティブ
+- コールバックベースのAPIをコルーチン対応にラップ
+- 独自の同期プリミティブ
 - ドメイン固有の非同期操作
 
 > **注意**: `Awaitable`コンセプトは、有効な`AwaitTransformer`特殊化を持つ型を自動的に検出します。
@@ -375,30 +375,30 @@ Task<> ProcessEvent()
 
 #### `Task<T>`
 
-非同期操作を表すメインのコルーチン型。
+非同期操作を表すメインのコルーチン型です。
 
-- **テンプレートパラメータ**: `T` - 戻り値の型（voidの場合は`Task<>`を使用）
-- **ムーブオンリー**: コピー不可、ムーブのみ
-- **即座実行**: 作成時に即座に開始
+- **テンプレートパラメータ**: `T` - 戻り値の型（voidの場合は`Task<>`を使用します）
+- **ムーブオンリー**: コピーはできず、ムーブのみ可能です
+- **即座実行**: 作成時に即座に開始されます
 
 #### `TaskScheduler`
 
-コルーチン実行を管理するフレームベーススケジューラ。
+コルーチン実行を管理するフレームベーススケジューラです。
 
-- `Update()` - 現在のフレームで保留中のすべてのタスクを処理
-- `GetPendingTaskCount()` - 実行待ちのタスク数を返す
+- `Update()` - 現在のフレームで保留中のすべてのタスクを処理します
+- `GetPendingTaskCount()` - 実行待ちのタスク数を返します
 
 #### `TaskSystem`
 
-スレッドローカルストレージで複数のスケジューラを管理する静的クラス。
+スレッドローカルストレージで複数のスケジューラを管理する静的クラスです。
 
-- `Initialize(config)` - スレッドローカル状態を初期化（使用前に必須）
-- `Shutdown()` - スレッドローカル状態をクリーンアップ
-- `CreateScheduler()` - 新しいスケジューラを作成し、IDを返す
-- `DestroyScheduler(id)` - スケジューラを削除
-- `RegisterScheduler(id)` - スケジューラを現在として設定するRAIIガードを返す
-- `GetScheduler(id)` - IDでスケジューラを取得
-- `GetCurrentScheduler()` - 現在アクティブなスケジューラを取得
+- `Initialize(config)` - スレッドローカル状態を初期化します（使用前に必須）
+- `Shutdown()` - スレッドローカル状態をクリーンアップします
+- `CreateScheduler()` - 新しいスケジューラを作成し、IDを返します
+- `DestroyScheduler(id)` - スケジューラを削除します
+- `RegisterScheduler(id)` - スケジューラを現在のものとして設定するRAIIガードを返します
+- `GetScheduler(id)` - IDでスケジューラを取得します
+- `GetCurrentScheduler()` - 現在アクティブなスケジューラを取得します
 
 ### ユーティリティ関数
 
@@ -438,7 +438,7 @@ auto [result1, result2] = co_await WhenAll(Task1(), Task2());
 
 #### `GetCompletedTask()`
 
-即座に完了したタスクを返します（条件分岐に便利）。
+即座に完了したタスクを返します（条件分岐に便利です）。
 
 ```cpp
 co_await (condition ? ActualTask() : GetCompletedTask());
@@ -454,7 +454,7 @@ co_await (condition ? ActualTask() : GetCompletedTask());
 MyBackgroundTask().Forget();
 ```
 
-> **重要**: `.Forget()`なしでは、タスクは保存またはawaitする必要があります。そうしないと早期破棄されます。
+> **重要**: `.Forget()`を使わない場合、タスクは変数に保存するか、awaitする必要があります。そうしないと、タスクが想定より早く破棄されてしまいます。
 
 #### `.IsDone()`
 
