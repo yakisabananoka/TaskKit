@@ -196,7 +196,7 @@ namespace TKit
 	}
 
 	template<typename Rep, typename Period>
-	class CustomAwaitTransformer<std::chrono::duration<Rep, Period>>
+	class AwaitTransformer<std::chrono::duration<Rep, Period>>
 	{
 	public:
 		static auto Transform(const std::chrono::duration<Rep, Period>& duration) noexcept

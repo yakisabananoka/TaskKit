@@ -1,5 +1,5 @@
-#ifndef TASKKIT_POOLALLOCATOR_H
-#define TASKKIT_POOLALLOCATOR_H
+#ifndef TASKKIT_POOL_ALLOCATOR_H
+#define TASKKIT_POOL_ALLOCATOR_H
 
 #include <cstddef>
 #include <vector>
@@ -111,4 +111,4 @@ namespace TKit
 	};
 }
 
-#endif //TASKKIT_POOLALLOCATOR_H
+#endif //TASKKIT_POOL_ALLOCATOR_H

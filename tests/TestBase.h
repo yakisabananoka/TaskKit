@@ -1,5 +1,5 @@
-﻿#ifndef TASKKIT_TASKKITTESTBASE_H
-#define TASKKIT_TASKKITTESTBASE_H
+﻿#ifndef TASKKIT_TEST_BASE_H
+#define TASKKIT_TEST_BASE_H
 #include <gtest/gtest.h>
 #include "TaskKit.h"
 
@@ -75,4 +75,4 @@ namespace TKit::Tests
 	};
 }
 
-#endif //TASKKIT_TASKKITTESTBASE_H
+#endif //TASKKIT_TEST_BASE_H

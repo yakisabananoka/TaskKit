@@ -8,7 +8,7 @@
 #include "details/TaskSystem.h"
 #include "details/TaskSystemConfiguration.h"
 #include "details/PromiseBase.h"
-#include "details/CustomAwaitTransformer.h"
+#include "details/AwaitTransformer.h"
 #include "details/Task.h"
 #include "details/Utility.h"
 

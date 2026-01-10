@@ -1,5 +1,5 @@
-﻿#ifndef TASKKIT_PROMISE_H
-#define TASKKIT_PROMISE_H
+﻿#ifndef TASKKIT_PROMISE_BASE_H
+#define TASKKIT_PROMISE_BASE_H
 #include <future>
 
 namespace TKit
@@ -83,4 +83,4 @@ namespace TKit
 	};
 }
 
-#endif //TASKKIT_PROMISE_H
+#endif //TASKKIT_PROMISE_BASE_H

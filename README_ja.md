@@ -289,11 +289,11 @@ TaskSystem::Initialize(config);
 
 ### カスタム待機可能型
 
-TaskKitは、`CustomAwaitTransformer`を使用してカスタム型をTaskコルーチン内で待機可能にする拡張メカニズムを提供します。
+TaskKitは、`AwaitTransformer`を使用してカスタム型をTaskコルーチン内で待機可能にする拡張メカニズムを提供します。
 
 **仕組み:**
 
-`CustomAwaitTransformer`テンプレートを使用して、カスタム型の変換ロジックを特殊化できます。Taskが`co_await yourCustomType`に遭遇すると、`CustomAwaitTransformer<YourType>::Transform()`を呼び出して待機可能なオブジェクトに変換します。
+`AwaitTransformer`テンプレートを使用して、カスタム型の変換ロジックを特殊化できます。Taskが`co_await yourCustomType`に遭遇すると、`AwaitTransformer<YourType>::Transform()`を呼び出して待機可能なオブジェクトに変換します。
 
 **例:**
 
@@ -305,11 +305,11 @@ struct MyCustomEvent
     std::string eventData;
 };
 
-// カスタム型に対してCustomAwaitTransformerを特殊化
+// カスタム型に対してAwaitTransformerを特殊化
 namespace TKit
 {
     template<>
-    struct CustomAwaitTransformer<MyCustomEvent>
+    struct AwaitTransformer<MyCustomEvent>
     {
         static auto Transform(MyCustomEvent&& event)
         {
@@ -351,7 +351,7 @@ Task<> ProcessEvent()
 
 **要件:**
 
-1. `TKit`名前空間内で`CustomAwaitTransformer<T>`を特殊化する
+1. `TKit`名前空間内で`AwaitTransformer<T>`を特殊化する
 2. 自分の型を受け入れる静的な`Transform()`メソッドを提供する
 3. 標準的なawaiterインターフェースを持つawaiterオブジェクトを返す:
    - `await_ready()` - 結果が即座に利用可能な場合にtrueを返す
@@ -365,7 +365,7 @@ Task<> ProcessEvent()
 - カスタム同期プリミティブ
 - ドメイン固有の非同期操作
 
-> **注意**: `CustomAwaitable`コンセプトは、有効な`CustomAwaitTransformer`特殊化を持つ型を自動的に検出します。
+> **注意**: `Awaitable`コンセプトは、有効な`AwaitTransformer`特殊化を持つ型を自動的に検出します。
 
 ---
 

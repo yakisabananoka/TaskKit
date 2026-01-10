@@ -289,11 +289,11 @@ TaskSystem::Initialize(config);
 
 ### Custom Awaitable Types
 
-TaskKit provides an extensibility mechanism to make custom types awaitable within Task coroutines using `CustomAwaitTransformer`.
+TaskKit provides an extensibility mechanism to make custom types awaitable within Task coroutines using `AwaitTransformer`.
 
 **How it works:**
 
-The `CustomAwaitTransformer` template allows you to specialize transformation logic for your custom types. When a Task encounters `co_await yourCustomType`, it will call `CustomAwaitTransformer<YourType>::Transform()` to convert it into an awaitable object.
+The `AwaitTransformer` template allows you to specialize transformation logic for your custom types. When a Task encounters `co_await yourCustomType`, it will call `AwaitTransformer<YourType>::Transform()` to convert it into an awaitable object.
 
 **Example:**
 
@@ -305,11 +305,11 @@ struct MyCustomEvent
     std::string eventData;
 };
 
-// Specialize CustomAwaitTransformer for your type
+// Specialize AwaitTransformer for your type
 namespace TKit
 {
     template<>
-    struct CustomAwaitTransformer<MyCustomEvent>
+    struct AwaitTransformer<MyCustomEvent>
     {
         static auto Transform(MyCustomEvent&& event)
         {
@@ -351,7 +351,7 @@ Task<> ProcessEvent()
 
 **Requirements:**
 
-1. Specialize `CustomAwaitTransformer<T>` in the `TKit` namespace
+1. Specialize `AwaitTransformer<T>` in the `TKit` namespace
 2. Provide a static `Transform()` method that accepts your type
 3. Return an awaiter object with standard awaiter interface:
    - `await_ready()` - Returns true if result is immediately available
@@ -365,7 +365,7 @@ Task<> ProcessEvent()
 - Custom synchronization primitives
 - Domain-specific async operations
 
-> **Note**: The `CustomAwaitable` concept automatically detects types that have a valid `CustomAwaitTransformer` specialization.
+> **Note**: The `Awaitable` concept automatically detects types that have a valid `AwaitTransformer` specialization.
 
 ---
 

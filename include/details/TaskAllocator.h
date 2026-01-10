@@ -1,5 +1,5 @@
-#ifndef TASKKIT_TASKALLOCATOR_H
-#define TASKKIT_TASKALLOCATOR_H
+#ifndef TASKKIT_TASK_ALLOCATOR_H
+#define TASKKIT_TASK_ALLOCATOR_H
 
 #include <cstddef>
 #include <new>
@@ -62,4 +62,4 @@ namespace TKit
 	};
 }
 
-#endif //TASKKIT_TASKALLOCATOR_H
+#endif //TASKKIT_TASK_ALLOCATOR_H

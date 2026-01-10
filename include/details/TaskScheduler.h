@@ -1,5 +1,5 @@
-﻿#ifndef TASKKIT_TASKSCHEDULER_H
-#define TASKKIT_TASKSCHEDULER_H
+﻿#ifndef TASKKIT_TASK_SCHEDULER_H
+#define TASKKIT_TASK_SCHEDULER_H
 
 #include <algorithm>
 #include <queue>
@@ -81,4 +81,4 @@ namespace TKit
 	};
 }
 
-#endif //TASKKIT_TASKSCHEDULER_H
+#endif //TASKKIT_TASK_SCHEDULER_H

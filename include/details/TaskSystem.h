@@ -1,5 +1,5 @@
-﻿#ifndef TASKKIT_TASKSYSTEM_H
-#define TASKKIT_TASKSYSTEM_H
+﻿#ifndef TASKKIT_TASK_SYSTEM_H
+#define TASKKIT_TASK_SYSTEM_H
 
 #include <cstddef>
 #include <stack>
@@ -244,4 +244,4 @@ namespace TKit
 	};
 }
 
-#endif //TASKKIT_TASKSYSTEM_H
+#endif //TASKKIT_TASK_SYSTEM_H
