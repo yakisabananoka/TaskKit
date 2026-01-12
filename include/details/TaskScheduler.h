@@ -22,13 +22,13 @@ namespace TKit
 			Lock();
 			while (!handles_.empty())
 			{
-				auto handle = handles_.front();
+				auto handle = handles_.back();
 				handles_.pop_back();
 				handle.destroy();
 			}
 			while (!processingHandles_.empty())
 			{
-				auto handle = processingHandles_.front();
+				auto handle = processingHandles_.back();
 				processingHandles_.pop_back();
 				handle.destroy();
 			}
@@ -43,7 +43,7 @@ namespace TKit
 
 			while (!processingHandles_.empty())
 			{
-				auto handle = processingHandles_.front();
+				auto handle = processingHandles_.back();
 				processingHandles_.pop_back();
 				handle.resume();
 			}
