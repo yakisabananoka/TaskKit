@@ -15,28 +15,27 @@ namespace TKit::Tests
 		void SetUp() override
 		{
 			TaskSystem::Initialize();
-			schedulerId_ = TaskSystem::CreateScheduler();
+			const auto ids = TaskSystem::GetMainThreadSchedulerIds();
+			schedulerId_ = ids[0];
 			registration_ = TaskSystem::ActivateScheduler(schedulerId_);
 		}
 
 		void TearDown() override
 		{
-			auto& scheduler = TaskSystem::GetScheduler(schedulerId_);
+			const auto pendingCount = TaskSystem::GetPendingTaskCount(schedulerId_);
 
-			EXPECT_EQ(scheduler.GetPendingTaskCount(), 0)
-				<< "Test left " << scheduler.GetPendingTaskCount() << " pending tasks";
+			EXPECT_EQ(pendingCount, 0)
+				<< "Test left " << pendingCount << " pending tasks";
 
 			registration_ = TaskSystem::SchedulerActivation();
-			TaskSystem::DestroyScheduler(schedulerId_);
 			TaskSystem::Shutdown();
 		}
 
 		void RunScheduler(int frames = 1) const
 		{
-			auto& scheduler = TaskSystem::GetScheduler(schedulerId_);
 			for (int i = 0; i < frames; ++i)
 			{
-				scheduler.Update();
+				TaskSystem::UpdateActivatedScheduler();
 			}
 		}
 

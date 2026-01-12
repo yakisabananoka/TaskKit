@@ -54,7 +54,10 @@ int main()
         // Run different examples (uncomment to try)
         //ExampleDelayFrameTask().Forget();
         //ExampleDelayForTask().Forget();
+
+        std::printf("Before calling ExampleWhenAllTask().Forget()\n");
         ExampleWhenAllTask().Forget();
+        std::printf("After calling ExampleWhenAllTask().Forget(), pending tasks: %zu\n", TaskSystem::GetPendingTaskCount(id));
 
         while (TaskSystem::GetPendingTaskCount(id) > 0)
         {

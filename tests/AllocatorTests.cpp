@@ -7,9 +7,9 @@ namespace TKit::Tests
 	protected:
 		static void CheckPendingTasksAreZero(const TaskSchedulerId& schedulerId)
 		{
-			const auto& scheduler = TaskSystem::GetScheduler(schedulerId);
-			EXPECT_EQ(scheduler.GetPendingTaskCount(), 0)
-				<< "Test left " << scheduler.GetPendingTaskCount() << " pending tasks";
+			const auto pendingCount = TaskSystem::GetPendingTaskCount(schedulerId);
+			EXPECT_EQ(pendingCount, 0)
+				<< "Test left " << pendingCount << " pending tasks";
 		}
 	};
 
@@ -41,13 +41,14 @@ namespace TKit::Tests
 
 		const TaskAllocator customAllocator(&allocatorContext, allocate, deallocate);
 
-		const auto config = TaskSystemConfigurationBuilder()
+		const auto config = TaskSystemConfiguration::Builder()
 			.WithCustomAllocator(customAllocator)
 			.Build();
 
 		TaskSystem::Initialize(config);
 
-		const auto schedulerId = TaskSystem::CreateScheduler();
+		const auto ids = TaskSystem::GetMainThreadSchedulerIds();
+		const auto schedulerId = ids[0];
 		{
 			auto registration = TaskSystem::ActivateScheduler(schedulerId);
 
@@ -81,7 +82,6 @@ namespace TKit::Tests
 		}
 
 		CheckPendingTasksAreZero(schedulerId);
-		TaskSystem::DestroyScheduler(schedulerId);
 		TaskSystem::Shutdown();
 	}
 
@@ -116,13 +116,14 @@ namespace TKit::Tests
 
 		const TaskAllocator sizeTrackingAllocator(&tracker, allocate, deallocate);
 
-		const auto config = TaskSystemConfigurationBuilder()
+		const auto config = TaskSystemConfiguration::Builder()
 			.WithCustomAllocator(sizeTrackingAllocator)
 			.Build();
 
 		TaskSystem::Initialize(config);
 
-		const auto schedulerId = TaskSystem::CreateScheduler();
+		const auto ids = TaskSystem::GetMainThreadSchedulerIds();
+		const auto schedulerId = ids[0];
 		{
 			auto registration = TaskSystem::ActivateScheduler(schedulerId);
 
@@ -143,7 +144,7 @@ namespace TKit::Tests
 			smallTask().Forget();
 			largeTask().Forget();
 
-			TaskSystem::GetCurrentScheduler().Update();
+			TaskSystem::UpdateActivatedScheduler();
 
 			EXPECT_LT(minSize, SIZE_MAX) << "Should have tracked minimum size";
 			EXPECT_GT(maxSize, 0) << "Should have tracked maximum size";
@@ -151,7 +152,6 @@ namespace TKit::Tests
 		}
 
 		CheckPendingTasksAreZero(schedulerId);
-		TaskSystem::DestroyScheduler(schedulerId);
 		TaskSystem::Shutdown();
 	}
 
@@ -197,13 +197,14 @@ namespace TKit::Tests
 
 		const TaskAllocator poolAllocator(&poolContext, allocate, deallocate);
 
-		const auto config = TaskSystemConfigurationBuilder()
+		const auto config = TaskSystemConfiguration::Builder()
 			.WithCustomAllocator(poolAllocator)
 			.Build();
 
 		TaskSystem::Initialize(config);
 
-		const auto schedulerId = TaskSystem::CreateScheduler();
+		const auto ids = TaskSystem::GetMainThreadSchedulerIds();
+		const auto schedulerId = ids[0];
 		{
 			auto registration = TaskSystem::ActivateScheduler(schedulerId);
 
@@ -229,7 +230,6 @@ namespace TKit::Tests
 		}
 
 		CheckPendingTasksAreZero(schedulerId);
-		TaskSystem::DestroyScheduler(schedulerId);
 		TaskSystem::Shutdown();
 	}
 
@@ -250,13 +250,14 @@ namespace TKit::Tests
 
 		const TaskAllocator trackingAllocator(&allocCount, allocate, deallocate);
 
-		const auto config = TaskSystemConfigurationBuilder()
+		const auto config = TaskSystemConfiguration::Builder()
 			.WithCustomAllocator(trackingAllocator)
 			.Build();
 
 		TaskSystem::Initialize(config);
 
-		const auto schedulerId = TaskSystem::CreateScheduler();
+		const auto ids = TaskSystem::GetMainThreadSchedulerIds();
+		const auto schedulerId = ids[0];
 		{
 			auto registration = TaskSystem::ActivateScheduler(schedulerId);
 
@@ -276,13 +277,12 @@ namespace TKit::Tests
 
 			outerTask().Forget();
 
-			TaskSystem::GetCurrentScheduler().Update();
+			TaskSystem::UpdateActivatedScheduler();
 
 			EXPECT_GT(allocCount, initialAllocCount + 1)
 				<< "Should allocate for nested tasks";
 		}
 
-		TaskSystem::DestroyScheduler(schedulerId);
 		TaskSystem::Shutdown();
 	}
 }

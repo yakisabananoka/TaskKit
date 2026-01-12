@@ -2,8 +2,8 @@
 #define TASKKIT_TASK_SCHEDULER_H
 
 #include <algorithm>
-#include <vector>
 #include <coroutine>
+#include <queue>
 #include <thread>
 
 namespace TKit
@@ -11,57 +11,57 @@ namespace TKit
 	class TaskScheduler final
 	{
 	public:
-		explicit TaskScheduler(std::size_t reservedTaskCount)
+		explicit TaskScheduler([[maybe_unused]] std::size_t reservedTaskCount)
 		{
 			handles_.reserve(reservedTaskCount);
-			processingHandles_.reserve(reservedTaskCount);
-			isRunning_.clear();
+			updateHandles_.reserve(reservedTaskCount);
 		}
 		~TaskScheduler()
 		{
-			Lock();
-			while (!handles_.empty())
+			LockHandles();
+			LockUpdateHandles();
+			for (const auto& handle: handles_)
 			{
-				auto handle = handles_.back();
-				handles_.pop_back();
 				handle.destroy();
 			}
-			while (!processingHandles_.empty())
+			for (const auto& handle: updateHandles_)
 			{
-				auto handle = processingHandles_.back();
-				processingHandles_.pop_back();
 				handle.destroy();
 			}
-			Unlock();
+			UnlockUpdateHandles();
+			UnlockHandles();
 		}
 
 		void Update()
 		{
-			Lock();
-			std::swap(processingHandles_, handles_);
-			Unlock();
+			LockUpdateHandles();
 
-			while (!processingHandles_.empty())
+			LockHandles();
+			std::swap(updateHandles_, handles_);
+			UnlockHandles();
+
+			for (const auto& handle : updateHandles_)
 			{
-				auto handle = processingHandles_.back();
-				processingHandles_.pop_back();
 				handle.resume();
 			}
+			updateHandles_.clear();
+
+			UnlockUpdateHandles();
 		}
 
 		void Schedule(std::coroutine_handle<> handle)
 		{
-			Lock();
+			LockHandles();
 			handles_.emplace_back(handle);
-			Unlock();
+			UnlockHandles();
 		}
 
 		[[nodiscard]]
 		std::size_t GetPendingTaskCount() const
 		{
-			Lock();
+			LockHandles();
 			std::size_t count = handles_.size();
-			Unlock();
+			UnlockHandles();
 
 			return count;
 		}
@@ -70,42 +70,61 @@ namespace TKit
 		TaskScheduler& operator=(const TaskScheduler&) = delete;
 		TaskScheduler(TaskScheduler&& other) noexcept
 		{
-			Lock();
-			other.Lock();
-			handles_ = std::move(other.handles_);
-			other.Unlock();
-			Unlock();
+			operator=(std::move(other));
 		}
 		TaskScheduler& operator=(TaskScheduler&& other) noexcept
 		{
 			if (this != &other)
 			{
-				Lock();
-				other.Lock();
+				LockHandles();
+				LockUpdateHandles();
+
+				other.LockHandles();
+				other.LockUpdateHandles();
+
 				handles_ = std::move(other.handles_);
-				other.Unlock();
-				Unlock();
+				updateHandles_ = std::move(other.updateHandles_);
+
+				other.UnlockUpdateHandles();
+				other.UnlockHandles();
+
+				UnlockUpdateHandles();
+				UnlockHandles();
 			}
 			return *this;
 		}
 
 	private:
-		void Lock() const
+		void LockHandles() const
 		{
-			while (isRunning_.test_and_set(std::memory_order_acquire))
+			while (handlesLock_.test_and_set(std::memory_order_acquire))
 			{
 				std::this_thread::yield();
 			}
 		}
 
-		void Unlock() const
+		void UnlockHandles() const
 		{
-			isRunning_.clear(std::memory_order_release);
+			handlesLock_.clear(std::memory_order_release);
+		}
+
+		void LockUpdateHandles() const
+		{
+			while (updateHandlesLock_.test_and_set(std::memory_order_acquire))
+			{
+				std::this_thread::yield();
+			}
+		}
+
+		void UnlockUpdateHandles() const
+		{
+			updateHandlesLock_.clear(std::memory_order_release);
 		}
 
 		std::vector<std::coroutine_handle<>> handles_;
-		std::vector<std::coroutine_handle<>> processingHandles_;
-		mutable std::atomic_flag isRunning_;
+		std::vector<std::coroutine_handle<>> updateHandles_;
+		mutable std::atomic_flag handlesLock_ = ATOMIC_FLAG_INIT;
+		mutable std::atomic_flag updateHandlesLock_ = ATOMIC_FLAG_INIT;
 	};
 }
 
