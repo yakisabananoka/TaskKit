@@ -7,24 +7,26 @@ namespace TKit
 {
 	struct TaskSystemConfiguration
 	{
-		bool createDefaultScheduler;
+		class Builder;
+
 		std::optional<TaskAllocator> allocator;
+		std::size_t mainThreadSchedulerCount = 1;
 	};
 
-	class TaskSystemConfigurationBuilder
+	class TaskSystemConfiguration::Builder
 	{
 	public:
-		TaskSystemConfigurationBuilder() = default;
+		Builder() = default;
 
-		TaskSystemConfigurationBuilder& WithDefaultScheduler(bool createDefault)
+		Builder& WithCustomAllocator(const TaskAllocator& allocator)
 		{
-			configuration_.createDefaultScheduler = createDefault;
+			configuration_.allocator = allocator;
 			return *this;
 		}
 
-		TaskSystemConfigurationBuilder& WithCustomAllocator(const TaskAllocator& allocator)
+		Builder& WithMainThreadSchedulerCount(std::size_t count)
 		{
-			configuration_.allocator = allocator;
+			configuration_.mainThreadSchedulerCount = count;
 			return *this;
 		}
 

@@ -49,7 +49,7 @@ namespace TKit::Tests
 
 		const auto schedulerId = TaskSystem::CreateScheduler();
 		{
-			auto registration = TaskSystem::RegisterScheduler(schedulerId);
+			auto registration = TaskSystem::ActivateScheduler(schedulerId);
 
 			auto task = []() -> Task<>
 			{
@@ -124,7 +124,7 @@ namespace TKit::Tests
 
 		const auto schedulerId = TaskSystem::CreateScheduler();
 		{
-			auto registration = TaskSystem::RegisterScheduler(schedulerId);
+			auto registration = TaskSystem::ActivateScheduler(schedulerId);
 
 			auto smallTask = []() -> Task<>
 			{
@@ -205,7 +205,7 @@ namespace TKit::Tests
 
 		const auto schedulerId = TaskSystem::CreateScheduler();
 		{
-			auto registration = TaskSystem::RegisterScheduler(schedulerId);
+			auto registration = TaskSystem::ActivateScheduler(schedulerId);
 
 			constexpr int taskCount = 100;
 			for (int i = 0; i < taskCount; ++i)
@@ -258,7 +258,7 @@ namespace TKit::Tests
 
 		const auto schedulerId = TaskSystem::CreateScheduler();
 		{
-			auto registration = TaskSystem::RegisterScheduler(schedulerId);
+			auto registration = TaskSystem::ActivateScheduler(schedulerId);
 
 			const int initialAllocCount = allocCount;
 

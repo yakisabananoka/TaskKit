@@ -46,19 +46,19 @@ Task<> ExampleWhenAllTask()
 int main()
 {
     TaskSystem::Initialize();
+    const auto ids = TaskSystem::GetMainThreadSchedulerIds();
 
     {
-        const auto id = TaskSystem::CreateScheduler();
-        auto registration = TaskSystem::RegisterScheduler(id);
+        const auto id = ids[0];
+        auto activation = TaskSystem::ActivateScheduler(id);
         // Run different examples (uncomment to try)
         //ExampleDelayFrameTask().Forget();
         //ExampleDelayForTask().Forget();
         ExampleWhenAllTask().Forget();
 
-        auto& scheduler = TaskSystem::GetScheduler(id);
-        while (scheduler.GetPendingTaskCount() > 0)
+        while (TaskSystem::GetPendingTaskCount(id) > 0)
         {
-            scheduler.Update();
+            TaskSystem::UpdateActivatedScheduler();
             std::this_thread::sleep_for(16ms);
         }
 

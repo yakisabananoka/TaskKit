@@ -16,7 +16,7 @@ namespace TKit::Tests
 		{
 			TaskSystem::Initialize();
 			schedulerId_ = TaskSystem::CreateScheduler();
-			registration_ = TaskSystem::RegisterScheduler(schedulerId_);
+			registration_ = TaskSystem::ActivateScheduler(schedulerId_);
 		}
 
 		void TearDown() override
@@ -26,7 +26,7 @@ namespace TKit::Tests
 			EXPECT_EQ(scheduler.GetPendingTaskCount(), 0)
 				<< "Test left " << scheduler.GetPendingTaskCount() << " pending tasks";
 
-			registration_ = TaskSystem::SchedulerRegistration();
+			registration_ = TaskSystem::SchedulerActivation();
 			TaskSystem::DestroyScheduler(schedulerId_);
 			TaskSystem::Shutdown();
 		}
@@ -71,7 +71,7 @@ namespace TKit::Tests
 
 	private:
 		TaskSchedulerId schedulerId_;
-		TaskSystem::SchedulerRegistration registration_;
+		TaskSystem::SchedulerActivation registration_;
 	};
 }
 

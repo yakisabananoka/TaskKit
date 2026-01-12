@@ -2,13 +2,12 @@
 #define TASKKIT_TASK_SYSTEM_H
 
 #include <cstddef>
-#include <stack>
 #include <unordered_map>
 #include "Exceptions.h"
-#include "TaskScheduler.h"
 #include "TaskSystemConfiguration.h"
 #include "PoolAllocator.h"
 #include "TaskSchedulerId.h"
+#include "TaskSchedulerManager.h"
 
 namespace TKit
 {
@@ -18,40 +17,40 @@ namespace TKit
 	class TaskSystem final
 	{
 	public:
-		struct SchedulerRegistration final
+		struct SchedulerActivation final
 		{
-			SchedulerRegistration() : valid_(false)
+			SchedulerActivation() : valid_(false)
 			{
 			}
 
-			explicit SchedulerRegistration(const TaskSchedulerId& id) : valid_(true)
+			explicit SchedulerActivation(const TaskSchedulerId& id) : valid_(true)
 			{
-				GetInternalIdStack().push(id.GetInternalId());
+				GetSchedulerManager().ActivateScheduler(id);
 			}
 
-			~SchedulerRegistration()
+			~SchedulerActivation()
 			{
 				if (valid_)
 				{
-					GetInternalIdStack().pop();
+					GetSchedulerManager().DeactivateScheduler();
 				}
 			}
 
-			SchedulerRegistration(const SchedulerRegistration&) = delete;
-			SchedulerRegistration& operator=(const SchedulerRegistration&) = delete;
+			SchedulerActivation(const SchedulerActivation&) = delete;
+			SchedulerActivation& operator=(const SchedulerActivation&) = delete;
 
-			SchedulerRegistration(SchedulerRegistration&& other) noexcept : valid_(other.valid_)
+			SchedulerActivation(SchedulerActivation&& other) noexcept : valid_(other.valid_)
 			{
 				other.valid_ = false;
 			}
 
-			SchedulerRegistration& operator=(SchedulerRegistration&& other) noexcept
+			SchedulerActivation& operator=(SchedulerActivation&& other) noexcept
 			{
 				if (this != &other)
 				{
 					if (valid_)
 					{
-						GetInternalIdStack().pop();
+						GetSchedulerManager().DeactivateScheduler();
 					}
 					valid_ = other.valid_;
 					other.valid_ = false;
@@ -66,108 +65,105 @@ namespace TKit
 		static void Initialize(const TaskSystemConfiguration& config = TaskSystemConfiguration{})
 		{
 			ThrowIfInitialized();
+			auto& sharedState = GetSharedState();
+			sharedState.mainThreadId = std::this_thread::get_id();
+			sharedState.schedulerManager.emplace(std::unordered_map<std::thread::id, std::size_t>
+				{
+					{std::this_thread::get_id(), config.mainThreadSchedulerCount}
+				}
+			);
 
-			auto& state = GetThreadState();
+			auto& threadState = GetThreadState();
 
-			state.useDefaultAllocator = !config.allocator.has_value();
-			if (state.useDefaultAllocator)
+			threadState.useDefaultAllocator = !config.allocator.has_value();
+			if (threadState.useDefaultAllocator)
 			{
 				auto* poolAllocator = new PoolAllocator();
-				state.allocator = poolAllocator->CreateTaskAllocator();
+				threadState.allocator = poolAllocator->CreateTaskAllocator();
 			}
 			else
 			{
-				state.allocator = config.allocator.value();
+				threadState.allocator = config.allocator.value();
 			}
 
-			if (config.createDefaultScheduler)
-			{
-				const auto id = TaskSchedulerId::Create();
-				state.schedulers.emplace(id.GetInternalId(), TaskScheduler{});
-				state.internalIdStack.push(id.GetInternalId());
-			}
-
-			state.initialized = true;
+			sharedState.isInitialized = true;
 		}
 
 		static void Shutdown()
 		{
 			ThrowIfNotInitialized();
+			ThrowIfMainThreadMismatch();
 
-			auto& state = GetThreadState();
-			if (state.useDefaultAllocator)
+			auto& threadState = GetThreadState();
+			if (threadState.useDefaultAllocator)
 			{
 				auto* poolAllocator = static_cast<PoolAllocator*>(GetAllocator().GetContext());
 				delete poolAllocator;
 			}
 
-			state = ThreadState{};
+			threadState = ThreadState{};
+
+			auto& sharedState = GetSharedState();
+			sharedState.schedulerManager.reset();
+			sharedState.mainThreadId = {};
+			sharedState.isInitialized = false;
 		}
 
 		[[nodiscard]]
 		static bool IsInitialized()
 		{
-			return GetThreadState().initialized;
+			return GetSharedState().isInitialized;
 		}
 
 		[[nodiscard]]
-		static TaskSchedulerId GetCurrentSchedulerId()
+		static TaskSchedulerId GetActivatedSchedulerId()
 		{
 			ThrowIfNotInitialized();
-			auto& stack = GetInternalIdStack();
-			if (stack.empty())
-			{
-				throw std::runtime_error("No scheduler registered in current context");
-			}
-			return TaskSchedulerId{
-				std::this_thread::get_id(),
-				stack.top()
-			};
+			return GetSchedulerManager().GetActivatedSchedulerId();
 		}
 
 		[[nodiscard]]
-		static TaskScheduler& GetCurrentScheduler()
+		static SchedulerActivation ActivateScheduler(const TaskSchedulerId& id)
 		{
-			return GetScheduler(GetCurrentSchedulerId());
+			return SchedulerActivation{id};
 		}
 
-		[[nodiscard]]
-		static TaskScheduler& GetScheduler(const TaskSchedulerId& id)
-		{
-			ThrowIfInvalidId(id);
-			return GetSchedulers().at(id.GetInternalId());
-		}
-
-		[[nodiscard]]
-		static TaskSchedulerId CreateScheduler()
+		static void UpdateActivatedScheduler()
 		{
 			ThrowIfNotInitialized();
-			auto id = TaskSchedulerId::Create();
-			GetSchedulers().emplace(id.GetInternalId(), TaskScheduler{});
-			return id;
+			GetSchedulerManager().UpdateActivatedScheduler();
 		}
 
-		static void DestroyScheduler(const TaskSchedulerId& id)
+		static std::vector<TaskSchedulerId> GetMainThreadSchedulerIds()
 		{
-			ThrowIfInvalidId(id);
-			GetSchedulers().erase(id.GetInternalId());
+			ThrowIfNotInitialized();
+			return GetSchedulerManager().GetThreadSchedulerIds(GetSharedState().mainThreadId);
 		}
 
-		[[nodiscard]]
-		static SchedulerRegistration RegisterScheduler(const TaskSchedulerId& id)
+		static std::size_t GetPendingTaskCount(const TaskSchedulerId& id)
 		{
-			ThrowIfInvalidId(id);
-			return SchedulerRegistration{ id };
+			ThrowIfNotInitialized();
+			return GetSchedulerManager().GetPendingTaskCount(id);
+		}
+
+		static void Schedule(const TaskSchedulerId& id, std::coroutine_handle<> handle)
+		{
+			ThrowIfNotInitialized();
+			GetSchedulerManager().Schedule(id, handle);
 		}
 
 	private:
 		struct ThreadState
 		{
 			TaskAllocator allocator;
-			std::stack<std::size_t> internalIdStack;
-			std::unordered_map<std::size_t, TaskScheduler> schedulers;
-			bool initialized = false;
 			bool useDefaultAllocator = true;
+		};
+
+		struct SharedState
+		{
+			std::thread::id mainThreadId;
+			std::optional<TaskSchedulerManager> schedulerManager;
+			bool isInitialized = false;
 		};
 
 		[[nodiscard]]
@@ -178,15 +174,16 @@ namespace TKit
 		}
 
 		[[nodiscard]]
-		static std::stack<std::size_t>& GetInternalIdStack()
+		static SharedState& GetSharedState()
 		{
-			return GetThreadState().internalIdStack;
+			static SharedState state;
+			return state;
 		}
 
 		[[nodiscard]]
-		static std::unordered_map<std::size_t, TaskScheduler>& GetSchedulers()
+		static TaskSchedulerManager& GetSchedulerManager()
 		{
-			return GetThreadState().schedulers;
+			return GetSharedState().schedulerManager.value();
 		}
 
 		[[nodiscard]]
@@ -194,20 +191,6 @@ namespace TKit
 		{
 			ThrowIfNotInitialized();
 			return GetThreadState().allocator;
-		}
-
-		static bool ValidateId(const TaskSchedulerId& id)
-		{
-			return std::this_thread::get_id() == id.GetThreadId() &&
-				GetSchedulers().contains(id.GetInternalId());
-		}
-
-		static void ThrowIfInvalidId(const TaskSchedulerId& id)
-		{
-			if (!ValidateId(id))
-			{
-				throw InvalidSchedulerIdError(id);
-			}
 		}
 
 		static void ThrowIfNotInitialized()
@@ -223,6 +206,15 @@ namespace TKit
 			if (IsInitialized())
 			{
 				throw std::runtime_error("TaskSystem already initialized for this thread.");
+			}
+		}
+
+		static void ThrowIfMainThreadMismatch()
+		{
+			auto& sharedState = GetSharedState();
+			if (std::this_thread::get_id() != sharedState.mainThreadId)
+			{
+				throw std::runtime_error("TaskSystem main thread mismatch.");
 			}
 		}
 

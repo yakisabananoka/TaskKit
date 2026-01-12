@@ -190,8 +190,7 @@ namespace TKit
 
 		std::suspend_always yield_value(std::monostate)
 		{
-			auto& scheduler = TaskSystem::GetCurrentScheduler();
-			scheduler.ScheduleNextFrame(std::coroutine_handle<Promise>::from_promise(*this));
+			TaskSystem::Schedule(TaskSystem::GetActivatedSchedulerId(), GetContinuation());
 			return {};
 		}
 

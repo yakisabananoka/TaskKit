@@ -7,12 +7,6 @@ namespace TKit
 	class TaskSchedulerId final
 	{
 	public:
-		static TaskSchedulerId Create()
-		{
-			thread_local std::size_t internalIdCounter = 1;
-			return {std::this_thread::get_id(), internalIdCounter++};
-		}
-
 		TaskSchedulerId() noexcept = default;
 		TaskSchedulerId(std::thread::id threadId, std::size_t internalId) noexcept :
 			threadId_(threadId),
