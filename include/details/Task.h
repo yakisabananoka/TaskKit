@@ -142,22 +142,11 @@ namespace TKit
 	public:
 		void* operator new(std::size_t size)
 		{
-			if (!TaskSystem::IsInitialized())
-			{
-				return ::operator new(size);
-			}
-
 			return TaskSystem::GetAllocator().Allocate(size);
 		}
 
 		void operator delete(void* ptr, std::size_t size) noexcept
 		{
-			if (!TaskSystem::IsInitialized())
-			{
-				::operator delete(ptr, size);
-				return;
-			}
-
 			TaskSystem::GetAllocator().Deallocate(ptr, size);
 		}
 
