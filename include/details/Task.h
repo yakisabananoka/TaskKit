@@ -10,7 +10,7 @@
 
 namespace TKit
 {
-	template<typename T = void>
+	template<typename = void>
 	class [[nodiscard]] Task final
 	{
 	public:
