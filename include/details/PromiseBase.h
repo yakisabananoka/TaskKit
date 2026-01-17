@@ -12,35 +12,40 @@ namespace TKit
 
 		void return_value(T value)
 		{
-			promise_.set_value(std::move(value));
+			result_ = value;
 		}
 
 		void unhandled_exception()
 		{
-			promise_.set_exception(std::current_exception());
+			result_ = std::current_exception();
 		}
 
 		[[nodiscard]]
 		bool IsReady() const
 		{
-			using namespace std::literals::chrono_literals;
-			return future_.wait_for(0s) == std::future_status::ready;
+			return result_.has_value();
 		}
 
 		T Get()
 		{
-			return future_.get();
+			while (!IsReady())
+			{
+				// wait
+			}
+
+			if (std::holds_alternative<std::exception_ptr>(*result_))
+			{
+				std::rethrow_exception(std::get<std::exception_ptr>(*result_));
+			}
+
+			return std::get<T>(std::move(*result_));
 		}
 
 	protected:
-		PromiseBase() :
-			future_(promise_.get_future())
-		{
-		}
+		PromiseBase() = default;
 
 	private:
-		std::promise<T> promise_;
-		std::future<T> future_;
+		std::optional<std::variant<T, std::exception_ptr>> result_;
 	};
 
 	template <>
@@ -51,35 +56,38 @@ namespace TKit
 
 		void return_void()
 		{
-			promise_.set_value();
+			result_ = 0;
 		}
 
 		void unhandled_exception()
 		{
-			promise_.set_exception(std::current_exception());
+			result_ = std::current_exception();
 		}
 
 		[[nodiscard]]
 		bool IsReady() const
 		{
-			using namespace std::literals::chrono_literals;
-			return future_.wait_for(0s) == std::future_status::ready;
+			return result_.has_value();
 		}
 
 		void Get()
 		{
-			future_.get();
+			while (!IsReady())
+			{
+				// wait
+			}
+
+			if (std::holds_alternative<std::exception_ptr>(*result_))
+			{
+				std::rethrow_exception(std::get<std::exception_ptr>(*result_));
+			}
 		}
 
 	protected:
-		PromiseBase() :
-			future_(promise_.get_future())
-		{
-		}
+		PromiseBase() = default;
 
 	private:
-		std::promise<void> promise_;
-		std::future<void> future_;
+		std::optional<std::variant<int, std::exception_ptr>> result_;
 	};
 }
 

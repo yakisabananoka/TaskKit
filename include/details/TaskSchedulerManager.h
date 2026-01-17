@@ -1,7 +1,5 @@
 ﻿#ifndef TASKKIT_TASKSCHEDULER_MANAGER_H
 #define TASKKIT_TASKSCHEDULER_MANAGER_H
-#include <assert.h>
-#include <span>
 #include <stack>
 #include <thread>
 #include <unordered_map>
