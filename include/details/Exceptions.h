@@ -24,11 +24,10 @@ namespace TKit
 		std::string message_;
 	};
 
-	class InvalidSchedulerIdError final : public TaskKitError
+	class OperationStoppedError final : public TaskKitError
 	{
 	public:
-		explicit InvalidSchedulerIdError(const TaskSchedulerId& id) :
-			TaskKitError(std::format("Invalid TaskScheduler Id: internalId={}", id.GetInternalId()))
+		explicit OperationStoppedError() : TaskKitError("Operation was stopped")
 		{
 		}
 	};

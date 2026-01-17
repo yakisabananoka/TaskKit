@@ -7,10 +7,6 @@
 #include <tuple>
 #include "Task.h"
 
-#if !defined(TASKKIT_STOP_TOKEN_PROCESS)
-#define TASKKIT_STOP_TOKEN_PROCESS(STOP_TOKEN) TKit::Details::ThrowIfStopRequested(STOP_TOKEN)
-#endif
-
 namespace TKit
 {
 	namespace Details
@@ -26,14 +22,6 @@ namespace TKit
 
 		template<typename... Results>
 		constexpr bool HasAnyType = (sizeof...(Results) > 0);
-
-		inline void ThrowIfStopRequested(const std::stop_token& stopToken)
-		{
-			if (stopToken.stop_requested())
-			{
-				throw std::runtime_error("Task cancelled via stop_token");
-			}
-		}
 
 		template<typename Result>
 		inline auto ToMonostateIfVoid(Task<Result>&& task)
@@ -70,6 +58,14 @@ namespace TKit
 		}
 	}
 
+	inline void ThrowIfStopRequested(const std::stop_token& stopToken)
+	{
+		if (stopToken.stop_requested())
+		{
+			throw OperationStoppedError();
+		}
+	}
+
 	inline Task<> GetCompletedTask()
 	{
 		co_return;
@@ -77,13 +73,13 @@ namespace TKit
 
 	inline Task<> CreateTask(std::function<Task<>(std::stop_token)> func, std::stop_token stopToken = {})
 	{
-		TASKKIT_STOP_TOKEN_PROCESS(stopToken);
+		ThrowIfStopRequested(stopToken);
 		co_await func(stopToken);
 	}
 
-	inline void RunTask(std::function<Task<>(std::stop_token)> func, std::stop_token stopToken = {})
+	inline void RunTask(const std::function<Task<>(std::stop_token)>& func, std::stop_token stopToken = {})
 	{
-		TASKKIT_STOP_TOKEN_PROCESS(stopToken);
+		ThrowIfStopRequested(stopToken);
 		func(stopToken).Forget();
 	}
 
@@ -93,12 +89,12 @@ namespace TKit
 		{
 			while (frameCount-- > 0)
 			{
-				TASKKIT_STOP_TOKEN_PROCESS(stopToken);
+				ThrowIfStopRequested(stopToken);
 				co_yield {};
 			}
 		}
 
-		TASKKIT_STOP_TOKEN_PROCESS(stopToken);
+		ThrowIfStopRequested(stopToken);
 		co_return;
 	}
 
@@ -108,11 +104,11 @@ namespace TKit
 		const auto start = std::chrono::steady_clock::now();
 		while (std::chrono::steady_clock::now() - start < duration)
 		{
-			TASKKIT_STOP_TOKEN_PROCESS(stopToken);
+			ThrowIfStopRequested(stopToken);
 			co_yield {};
 		}
 
-		TASKKIT_STOP_TOKEN_PROCESS(stopToken);
+		ThrowIfStopRequested(stopToken);
 		co_return;
 	}
 
@@ -121,11 +117,11 @@ namespace TKit
 	{
 		while (Clock::now() < timePoint)
 		{
-			TASKKIT_STOP_TOKEN_PROCESS(stopToken);
+			ThrowIfStopRequested(stopToken);
 			co_yield {};
 		}
 
-		TASKKIT_STOP_TOKEN_PROCESS(stopToken);
+		ThrowIfStopRequested(stopToken);
 		co_return;
 	}
 
