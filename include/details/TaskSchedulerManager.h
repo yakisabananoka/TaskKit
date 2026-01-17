@@ -1,5 +1,6 @@
 ﻿#ifndef TASKKIT_TASKSCHEDULER_MANAGER_H
 #define TASKKIT_TASKSCHEDULER_MANAGER_H
+#include <cassert>
 #include <stack>
 #include <thread>
 #include <unordered_map>
@@ -32,14 +33,18 @@ namespace TKit
 
 		void Schedule(const TaskSchedulerId& id, std::coroutine_handle<> handle)
 		{
-			ThrowIfInvalidId(id);
+			assert(threadContexts_.contains(id.GetThreadId()) && "TaskSchedulerManager: called from unregistered thread");
+			const auto& schedulers = threadContexts_.at(id.GetThreadId()).schedulers;
+			assert(id.GetInternalId() < schedulers.size() && "TaskSchedulerManager: invalid scheduler id");
 			threadContexts_.at(id.GetThreadId()).schedulers.at(id.GetInternalId()).Schedule(handle);
 		}
 
 		void ActivateScheduler(const TaskSchedulerId& id)
 		{
-			ThrowIfDifferentThread(id);
-			ThrowIfInvalidId(id);
+			assert(std::this_thread::get_id() == id.GetThreadId() && "TaskSchedulerManager: called from different thread");
+			assert(threadContexts_.contains(id.GetThreadId()) && "TaskSchedulerManager: called from unregistered thread");
+			const auto& schedulers = threadContexts_.at(id.GetThreadId()).schedulers;
+			assert(id.GetInternalId() < schedulers.size() && "TaskSchedulerManager: invalid scheduler id");
 
 			threadContexts_.at(id.GetThreadId()).internalIdStack.push(id.GetInternalId());
 		}
@@ -47,20 +52,20 @@ namespace TKit
 		void DeactivateScheduler()
 		{
 			const auto threadId = std::this_thread::get_id();
-			ThrowIfInvalidThread(threadId);
-			ThrowIfNoActiveScheduler(threadId);
+			assert(threadContexts_.contains(threadId) && "TaskSchedulerManager: called from unregistered thread");
+			const auto& stack = threadContexts_.at(threadId).internalIdStack;
+			assert(!stack.empty() && "TaskSchedulerManager: no active scheduler in current context");
 
-			auto& stack = threadContexts_.at(threadId).internalIdStack;
-			stack.pop();
+			threadContexts_.at(threadId).internalIdStack.pop();
 		}
 
 		TaskSchedulerId GetActivatedSchedulerId() const
 		{
 			const auto threadId = std::this_thread::get_id();
-			ThrowIfInvalidThread(threadId);
-			ThrowIfNoActiveScheduler(threadId);
-
+			assert(threadContexts_.contains(threadId) && "TaskSchedulerManager: called from unregistered thread");
 			const auto& stack = threadContexts_.at(threadId).internalIdStack;
+			assert(!stack.empty() && "TaskSchedulerManager: no active scheduler in current context");
+
 			return { threadId, stack.top() };
 		}
 
@@ -84,7 +89,7 @@ namespace TKit
 
 		std::vector<TaskSchedulerId> GetThreadSchedulerIds(std::thread::id threadId) const
 		{
-			ThrowIfInvalidThread(threadId);
+			assert(threadContexts_.contains(threadId) && "TaskSchedulerManager: called from unregistered thread");
 
 			std::vector<TaskSchedulerId> ids;
 			const auto& schedulers = threadContexts_.at(threadId).schedulers;
@@ -117,50 +122,18 @@ namespace TKit
 
 		TaskScheduler& GetScheduler(const TaskSchedulerId& id)
 		{
-			ThrowIfInvalidId(id);
+			assert(threadContexts_.contains(id.GetThreadId()) && "TaskSchedulerManager: called from unregistered thread");
+			const auto& schedulers = threadContexts_.at(id.GetThreadId()).schedulers;
+			assert(id.GetInternalId() < schedulers.size() && "TaskSchedulerManager: invalid scheduler id");
 			return threadContexts_.at(id.GetThreadId()).schedulers.at(id.GetInternalId());
 		}
 
 		const TaskScheduler& GetScheduler(const TaskSchedulerId& id) const
 		{
-			ThrowIfInvalidId(id);
-			return threadContexts_.at(id.GetThreadId()).schedulers.at(id.GetInternalId());
-		}
-
-		void ThrowIfDifferentThread(const TaskSchedulerId& id) const
-		{
-			const auto threadId = std::this_thread::get_id();
-			if (threadId != id.GetThreadId())
-			{
-				throw std::runtime_error("TaskSchedulerManager: called from different thread");
-			}
-		}
-
-		void ThrowIfInvalidThread(std::thread::id id) const
-		{
-			if (!threadContexts_.contains(id))
-			{
-				throw std::runtime_error("TaskSchedulerManager: called from unregistered thread");
-			}
-		}
-
-		void ThrowIfInvalidId(const TaskSchedulerId& id) const
-		{
-			ThrowIfInvalidThread(id.GetThreadId());
+			assert(threadContexts_.contains(id.GetThreadId()) && "TaskSchedulerManager: called from unregistered thread");
 			const auto& schedulers = threadContexts_.at(id.GetThreadId()).schedulers;
-			if (id.GetInternalId() >= schedulers.size())
-			{
-				throw InvalidSchedulerIdError(id);
-			}
-		}
-
-		void ThrowIfNoActiveScheduler(std::thread::id threadId) const
-		{
-			const auto& stack = threadContexts_.at(threadId).internalIdStack;
-			if (stack.empty())
-			{
-				throw std::runtime_error("TaskSchedulerManager: no active scheduler in current context");
-			}
+			assert(id.GetInternalId() < schedulers.size() && "TaskSchedulerManager: invalid scheduler id");
+			return threadContexts_.at(id.GetThreadId()).schedulers.at(id.GetInternalId());
 		}
 
 		std::unordered_map<std::thread::id, ThreadContext> threadContexts_;
