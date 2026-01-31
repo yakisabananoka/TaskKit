@@ -5,7 +5,7 @@
 #include <variant>
 #include <cstdio>
 #include "PromiseBase.h"
-#include "TaskSystem.h"
+#include "PromiseContext.h"
 #include "AwaitTransformer.h"
 
 namespace TKit
@@ -142,12 +142,12 @@ namespace TKit
 	public:
 		void* operator new(std::size_t size)
 		{
-			return TaskSystem::GetAllocator().Allocate(size);
+			return PromiseContext::GetCurrent().Allocate(size);
 		}
 
 		void operator delete(void* ptr, std::size_t size) noexcept
 		{
-			TaskSystem::GetAllocator().Deallocate(ptr, size);
+			PromiseContext::GetCurrent().Deallocate(ptr, size);
 		}
 
 		[[nodiscard]]
@@ -179,7 +179,8 @@ namespace TKit
 
 		std::suspend_always yield_value(std::monostate)
 		{
-			TaskSystem::Schedule(TaskSystem::GetActivatedSchedulerId(), Handle::from_promise(*this));
+			auto& context = PromiseContext::GetCurrent();
+			context.Schedule(context.GetActivatedSchedulerId(), Handle::from_promise(*this));
 			return {};
 		}
 

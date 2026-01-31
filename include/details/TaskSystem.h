@@ -8,12 +8,10 @@
 #include "PoolAllocator.h"
 #include "TaskSchedulerId.h"
 #include "TaskSchedulerManager.h"
+#include "PromiseContext.h"
 
 namespace TKit
 {
-	template<typename T>
-	class Task;
-
 	class TaskSystem final
 	{
 	public:
@@ -73,18 +71,19 @@ namespace TKit
 				}
 			);
 
-			auto& threadState = GetThreadState();
-
-			threadState.useDefaultAllocator = !config.allocator.has_value();
-			if (threadState.useDefaultAllocator)
+			sharedState.useDefaultAllocator = !config.allocator.has_value();
+			if (sharedState.useDefaultAllocator)
 			{
 				auto* poolAllocator = new PoolAllocator();
-				threadState.allocator = poolAllocator->CreateTaskAllocator();
+				sharedState.allocator = poolAllocator->CreateTaskAllocator();
 			}
 			else
 			{
-				threadState.allocator = config.allocator.value();
+				sharedState.allocator = config.allocator.value();
 			}
+
+			sharedState.promiseContext.emplace(sharedState.allocator, *sharedState.schedulerManager);
+			PromiseContext::SetCurrent(&sharedState.promiseContext.value());
 
 			sharedState.isInitialized = true;
 		}
@@ -95,14 +94,14 @@ namespace TKit
 			auto& sharedState = GetSharedState();
 			assert(std::this_thread::get_id() == sharedState.mainThreadId && "TaskSystem main thread mismatch.");
 
-			auto& threadState = GetThreadState();
-			if (threadState.useDefaultAllocator)
+			PromiseContext::SetCurrent(nullptr);
+			sharedState.promiseContext.reset();
+
+			if (sharedState.useDefaultAllocator)
 			{
 				auto* poolAllocator = static_cast<PoolAllocator*>(GetAllocator().GetContext());
 				delete poolAllocator;
 			}
-
-			threadState = ThreadState{};
 
 			sharedState.schedulerManager.reset();
 			sharedState.mainThreadId = {};
@@ -153,25 +152,15 @@ namespace TKit
 		}
 
 	private:
-		struct ThreadState
-		{
-			TaskAllocator allocator;
-			bool useDefaultAllocator = true;
-		};
-
 		struct SharedState
 		{
 			std::thread::id mainThreadId;
+			TaskAllocator allocator;
 			std::optional<TaskSchedulerManager> schedulerManager;
+			std::optional<PromiseContext> promiseContext;
+			bool useDefaultAllocator = true;
 			bool isInitialized = false;
 		};
-
-		[[nodiscard]]
-		static ThreadState& GetThreadState()
-		{
-			thread_local ThreadState state;
-			return state;
-		}
 
 		[[nodiscard]]
 		static SharedState& GetSharedState()
@@ -190,13 +179,10 @@ namespace TKit
 		static TaskAllocator& GetAllocator()
 		{
 			assert(IsInitialized() && "TaskSystem not initialized for this thread. Call TaskSystem::Initialize() first.");
-			return GetThreadState().allocator;
+			return GetSharedState().allocator;
 		}
 
 		TaskSystem() = default;
-
-		template <typename T>
-		friend class Task;
 	};
 }
 
