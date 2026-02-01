@@ -56,6 +56,7 @@ namespace TKit
 						workerReadyCv.notify_one();
 						startCv.wait(lock, [&ready]() { return ready; });
 					}
+					waitingWorkers.fetch_add(1, std::memory_order_release);
 
 					WorkerMain(i);
 				});
@@ -74,9 +75,15 @@ namespace TKit
 					workerContexts_[i]->schedulerId = schedulerManager_->CreateScheduler(workerId, reservedTaskCount);
 				}
 
+				waitingWorkers.store(0, std::memory_order_release);
 				ready = true;
 			}
 			startCv.notify_all();
+
+			while (waitingWorkers.load(std::memory_order_acquire) < threadCount)
+			{
+				std::this_thread::yield();
+			}
 		}
 
 		~ThreadPool()

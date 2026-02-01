@@ -2,11 +2,12 @@
 #define TASKKIT_PROMISE_CONTEXT_H
 
 #include <cassert>
-#include "TaskAllocator.h"
-#include "TaskSchedulerManager.h"
 
 namespace TKit
 {
+	class TaskAllocator;
+	class TaskSchedulerManager;
+
 	class PromiseContext final
 	{
 	public:

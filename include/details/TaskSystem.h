@@ -89,6 +89,8 @@ namespace TKit
 			auto& sharedState = GetSharedState();
 			assert(std::this_thread::get_id() == sharedState.mainThreadId && "TaskSystem main thread mismatch.");
 
+			sharedState.schedulerManager.reset();
+
 			PromiseContext::SetCurrent(nullptr);
 			sharedState.promiseContext.reset();
 
@@ -98,7 +100,6 @@ namespace TKit
 				delete poolAllocator;
 			}
 
-			sharedState.schedulerManager.reset();
 			sharedState.mainThreadId = {};
 			sharedState.isInitialized = false;
 		}
