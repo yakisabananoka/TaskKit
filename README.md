@@ -12,8 +12,8 @@ Provides an intuitive and lightweight task system with frame-based scheduling fo
 * **C++20 coroutines** - Modern async/await syntax with `co_await`
 * **Frame-based scheduling** - Perfect for game loops and real-time applications
 * **Time-based delays** - Support for both frame delays (`DelayFrame`) and duration-based waits (`WaitFor`)
-* **Task composition** - Combine multiple tasks with `WhenAll`
-* **Thread-local by design** - Automatic thread safety through thread-local storage
+* **Task composition** - Combine multiple tasks with `WhenAll` and `WhenAny`
+* **Thread pool support** - Built-in thread pool with `SwitchToThreadPool` and `RunOnThreadPool`
 * **Efficient memory allocation** - Pool allocator reduces heap overhead for coroutine frames
 * **Customizable allocators** - Bring your own allocator for fine-grained control
 * **Zero dependencies** - Only requires C++20 standard library
@@ -31,6 +31,7 @@ Provides an intuitive and lightweight task system with frame-based scheduling fo
   - [Delayed Execution](#delayed-execution)
   - [Task with Return Value](#task-with-return-value)
   - [Concurrent Tasks](#concurrent-tasks)
+  - [Thread Pool Operations](#thread-pool-operations)
   - [Cancellable Tasks](#cancellable-tasks)
   - [Custom Allocators](#custom-allocators)
 - [Advanced Features](#advanced-features)
@@ -102,22 +103,21 @@ Task<> ExampleTask()
 
 int main()
 {
-    // Initialize TaskSystem (once per thread)
+    // Initialize TaskSystem (creates thread pool automatically)
     TaskSystem::Initialize();
 
     {
-        // Create and register a scheduler
+        // Create and activate a scheduler
         auto id = TaskSystem::CreateScheduler();
-        auto registration = TaskSystem::RegisterScheduler(id);
+        auto activation = TaskSystem::ActivateScheduler(id);
 
         // Start the task (fire-and-forget)
         ExampleTask().Forget();
 
         // Update scheduler each frame
-        auto& scheduler = TaskSystem::GetScheduler(id);
-        while (scheduler.GetPendingTaskCount() > 0)
+        while (TaskSystem::GetPendingTaskCount(id) > 0)
         {
-            scheduler.Update();
+            TaskSystem::UpdateActivatedScheduler();
             std::this_thread::sleep_for(16ms); // ~60 FPS
         }
     }
@@ -145,31 +145,37 @@ Tasks in TaskKit follow a simple lifecycle:
 
 ### TaskSystem and Schedulers
 
-**TaskSystem** uses thread-local storage for automatic thread isolation. Each thread maintains its own independent set of schedulers.
+**TaskSystem** manages schedulers and a built-in thread pool. It must be initialized before use.
 
 **Key features:**
-- Must call `TaskSystem::Initialize()` once per thread before use
+- Call `TaskSystem::Initialize()` once at application startup
 - Schedulers are identified by unique IDs containing thread ID
-- `SchedulerRegistration` RAII guard manages current scheduler context
-- Thread-safe by design - no cross-thread scheduler access
+- `SchedulerActivation` RAII guard manages current scheduler context
+- Built-in thread pool for offloading heavy computations
 
 **Typical pattern:**
 
 ```cpp
-// Initialize thread-local TaskSystem
+// Initialize TaskSystem (creates thread pool)
 TaskSystem::Initialize();
 
-// Create scheduler
+// Create scheduler for main thread
 auto id = TaskSystem::CreateScheduler();
 
-// Register as current (RAII guard)
+// Activate as current (RAII guard)
 {
-    auto reg = TaskSystem::RegisterScheduler(id);
+    auto activation = TaskSystem::ActivateScheduler(id);
 
     // Tasks created here use this scheduler
     MyTask().Forget();
 
-} // Automatically unregistered
+    // Update loop
+    while (TaskSystem::GetPendingTaskCount(id) > 0)
+    {
+        TaskSystem::UpdateActivatedScheduler();
+    }
+
+} // Automatically deactivated
 
 // Cleanup
 TaskSystem::Shutdown();
@@ -215,21 +221,78 @@ Task<> UseResult()
 ### Concurrent Tasks
 
 ```cpp
-Task<> ConcurrentExample()
+Task<> WhenAllExample()
 {
-    auto task1 = []() -> Task<> {
+    auto task1 = []() -> Task<int> {
         co_await WaitFor(2s);
-        std::printf("Task 1 done\n");
+        co_return 1;
     };
 
-    auto task2 = []() -> Task<> {
+    auto task2 = []() -> Task<int> {
         co_await WaitFor(3s);
-        std::printf("Task 2 done\n");
+        co_return 2;
     };
 
     // Wait for all tasks to complete
-    co_await WhenAll(task1(), task2());
-    std::printf("All tasks completed\n");
+    auto [result1, result2] = co_await WhenAll(task1(), task2());
+    std::printf("Results: %d, %d\n", result1, result2);
+}
+
+Task<> WhenAnyExample()
+{
+    auto task1 = []() -> Task<int> {
+        co_await WaitFor(2s);
+        co_return 1;
+    };
+
+    auto task2 = []() -> Task<int> {
+        co_await WaitFor(1s);
+        co_return 2;
+    };
+
+    // Wait for the first task to complete
+    auto result = co_await WhenAny(task1(), task2());
+    // result is std::variant<int, int>
+    std::printf("First completed index: %zu\n", result.index());
+}
+```
+
+### Thread Pool Operations
+
+```cpp
+Task<> ThreadPoolExample(TaskSchedulerId mainSchedulerId)
+{
+    // Switch to thread pool for heavy computation
+    co_await SwitchToThreadPool();
+
+    // Now running on a worker thread
+    auto result = HeavyComputation();
+
+    // Switch back to main scheduler
+    co_await SwitchToSelectedScheduler(mainSchedulerId);
+
+    // Back on main thread
+    UpdateUI(result);
+}
+
+Task<> RunOnThreadPoolExample()
+{
+    // RunOnThreadPool automatically returns to original scheduler
+    int result = co_await RunOnThreadPool([]() {
+        return HeavyComputation();
+    });
+
+    // Automatically back on original thread
+    UpdateUI(result);
+}
+
+Task<> RunOnThreadPoolWithTaskExample()
+{
+    // Also works with functions returning Task<T>
+    auto data = co_await RunOnThreadPool([]() -> Task<std::vector<int>> {
+        co_await SomeAsyncOperation();
+        co_return ProcessData();
+    });
 }
 ```
 
@@ -241,7 +304,7 @@ Task<> CancellableTask(std::stop_token stopToken)
     for (int i = 0; i < 10; ++i)
     {
         // Check for cancellation
-        TASKKIT_STOP_TOKEN_PROCESS(stopToken);
+        ThrowIfStopRequested(stopToken);
 
         co_await DelayFrame(1);
         std::printf("Iteration %d\n", i);
@@ -273,15 +336,17 @@ TaskAllocator myAllocator{
     }
 };
 
-// Initialize TaskSystem with custom allocator
-auto config = TaskSystemConfigurationBuilder()
+// Initialize TaskSystem with custom configuration
+auto config = TaskSystemConfiguration::Builder()
     .WithCustomAllocator(myAllocator)
+    .WithThreadPoolSize(4)        // Number of worker threads
+    .WithReservedTaskCount(200)   // Reserved task slots per scheduler
     .Build();
 
 TaskSystem::Initialize(config);
 ```
 
-> **Note**: By default, TaskKit uses an efficient pool allocator that reduces heap allocation overhead. Custom allocators are useful for memory tracking, debugging, or integration with existing memory management systems.
+> **Note**: By default, TaskKit uses an efficient pool allocator that reduces heap allocation overhead. Thread pool size defaults to `std::thread::hardware_concurrency()`.
 
 ---
 
@@ -309,8 +374,9 @@ struct MyCustomEvent
 namespace TKit
 {
     template<>
-    struct AwaitTransformer<MyCustomEvent>
+    class AwaitTransformer<MyCustomEvent>
     {
+    public:
         static auto Transform(MyCustomEvent&& event)
         {
             // Return an awaiter that handles your custom type
@@ -381,24 +447,28 @@ The main coroutine type representing an asynchronous operation.
 - **Move-only**: Cannot be copied, only moved
 - **Eager execution**: Starts immediately upon creation
 
-#### `TaskScheduler`
-
-Frame-based scheduler managing coroutine execution.
-
-- `Update()` - Process all pending tasks for current frame
-- `GetPendingTaskCount()` - Returns number of tasks waiting to execute
-
 #### `TaskSystem`
 
-Static class managing multiple schedulers with thread-local storage.
+Static class managing schedulers and thread pool.
 
-- `Initialize(config)` - Initialize thread-local state (required before use)
-- `Shutdown()` - Cleanup thread-local state
-- `CreateScheduler()` - Create new scheduler, returns ID
-- `DestroyScheduler(id)` - Remove scheduler
-- `RegisterScheduler(id)` - Returns RAII guard setting scheduler as current
-- `GetScheduler(id)` - Get scheduler by ID
-- `GetCurrentScheduler()` - Get currently active scheduler
+- `Initialize(config)` - Initialize TaskSystem with optional configuration
+- `Shutdown()` - Cleanup and destroy thread pool
+- `IsInitialized()` - Check if TaskSystem is initialized
+- `CreateScheduler(threadId, reservedCount)` - Create new scheduler, returns ID
+- `ActivateScheduler(id)` - Returns RAII guard that activates scheduler
+- `UpdateActivatedScheduler()` - Process pending tasks on activated scheduler
+- `GetPendingTaskCount(id)` - Get number of pending tasks
+- `GetActivatedSchedulerId()` - Get currently activated scheduler ID
+- `Schedule(id, handle)` - Schedule coroutine handle to specific scheduler
+
+#### `TaskSystemConfiguration::Builder`
+
+Builder for TaskSystem configuration.
+
+- `WithCustomAllocator(allocator)` - Set custom memory allocator
+- `WithThreadPoolSize(size)` - Set number of worker threads (0 = hardware_concurrency)
+- `WithReservedTaskCount(count)` - Set reserved task slots per scheduler
+- `Build()` - Create configuration object
 
 ### Utility Functions
 
@@ -434,6 +504,47 @@ Waits for multiple tasks to complete, returns tuple of results.
 
 ```cpp
 auto [result1, result2] = co_await WhenAll(Task1(), Task2());
+```
+
+#### `WhenAny(tasks...)`
+
+Waits for the first task to complete, returns variant of results.
+
+```cpp
+auto result = co_await WhenAny(Task1(), Task2());
+// result.index() indicates which task completed first
+```
+
+#### `SwitchToThreadPool()`
+
+Switches coroutine execution to thread pool.
+
+```cpp
+co_await SwitchToThreadPool();
+// Now running on worker thread
+```
+
+#### `SwitchToSelectedScheduler(id)`
+
+Switches coroutine execution to specified scheduler.
+
+```cpp
+co_await SwitchToSelectedScheduler(mainSchedulerId);
+// Now running on main thread
+```
+
+#### `RunOnThreadPool(func)`
+
+Executes function on thread pool and automatically returns to original scheduler.
+
+```cpp
+// With regular function
+int result = co_await RunOnThreadPool([]() { return compute(); });
+
+// With Task-returning function
+auto data = co_await RunOnThreadPool([]() -> Task<Data> {
+    co_return co_await AsyncCompute();
+});
 ```
 
 #### `GetCompletedTask()`

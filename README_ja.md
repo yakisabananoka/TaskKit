@@ -12,8 +12,8 @@ C++20コルーチン向けの直感的で軽量なタスクシステムを、フ
 * **C++20コルーチン** - `co_await`によるモダンなasync/await構文
 * **フレームベーススケジューリング** - ゲームループやリアルタイムアプリケーションに最適
 * **時間ベースの遅延** - フレーム遅延（`DelayFrame`）と時間ベースの待機（`WaitFor`）の両方をサポート
-* **タスク合成** - `WhenAll`で複数のタスクを組み合わせ可能
-* **スレッドローカル設計** - スレッドローカルストレージによる自動スレッドセーフティ
+* **タスク合成** - `WhenAll`と`WhenAny`で複数のタスクを組み合わせ可能
+* **スレッドプール対応** - `SwitchToThreadPool`と`RunOnThreadPool`による組み込みスレッドプール
 * **効率的なメモリ確保** - プールアロケータでコルーチンフレームのヒープオーバーヘッドを削減
 * **カスタマイズ可能なアロケータ** - 独自のアロケータで細かく制御可能
 * **依存関係ゼロ** - C++20標準ライブラリのみが必要
@@ -31,6 +31,7 @@ C++20コルーチン向けの直感的で軽量なタスクシステムを、フ
   - [遅延実行](#遅延実行)
   - [戻り値を持つタスク](#戻り値を持つタスク)
   - [並行タスク](#並行タスク)
+  - [スレッドプール操作](#スレッドプール操作)
   - [キャンセル可能なタスク](#キャンセル可能なタスク)
   - [カスタムアロケータ](#カスタムアロケータ)
 - [高度な機能](#高度な機能)
@@ -102,22 +103,21 @@ Task<> ExampleTask()
 
 int main()
 {
-    // TaskSystemを初期化（スレッドごとに1回）
+    // TaskSystemを初期化（スレッドプールも自動的に作成）
     TaskSystem::Initialize();
 
     {
-        // スケジューラを作成して登録
+        // スケジューラを作成してアクティブ化
         auto id = TaskSystem::CreateScheduler();
-        auto registration = TaskSystem::RegisterScheduler(id);
+        auto activation = TaskSystem::ActivateScheduler(id);
 
         // タスクを開始（ファイア・アンド・フォーゲット）
         ExampleTask().Forget();
 
         // 毎フレームスケジューラを更新
-        auto& scheduler = TaskSystem::GetScheduler(id);
-        while (scheduler.GetPendingTaskCount() > 0)
+        while (TaskSystem::GetPendingTaskCount(id) > 0)
         {
-            scheduler.Update();
+            TaskSystem::UpdateActivatedScheduler();
             std::this_thread::sleep_for(16ms); // 約60 FPS
         }
     }
@@ -145,31 +145,37 @@ TaskKitのタスクは、シンプルなライフサイクルに従います：
 
 ### TaskSystemとScheduler
 
-**TaskSystem**は、スレッドローカルストレージを使用して自動的にスレッド分離を行います。各スレッドは独立したスケジューラのセットを保持します。
+**TaskSystem**は、スケジューラと組み込みスレッドプールを管理します。使用前に初期化が必要です。
 
 **主な特徴:**
-- 使用前にスレッドごとに`TaskSystem::Initialize()`を呼び出す必要があります
+- アプリケーション起動時に`TaskSystem::Initialize()`を一度呼び出します
 - スケジューラはスレッドIDを含む一意のIDで識別されます
-- `SchedulerRegistration` RAIIガードが現在のスケジューラコンテキストを管理します
-- スレッドセーフな設計 - 異なるスレッド間でのスケジューラアクセスはできません
+- `SchedulerActivation` RAIIガードが現在のスケジューラコンテキストを管理します
+- 重い計算をオフロードするための組み込みスレッドプール
 
 **典型的なパターン:**
 
 ```cpp
-// スレッドローカルTaskSystemを初期化
+// TaskSystemを初期化（スレッドプールも作成）
 TaskSystem::Initialize();
 
-// スケジューラを作成
+// メインスレッド用のスケジューラを作成
 auto id = TaskSystem::CreateScheduler();
 
-// 現在のスケジューラとして登録（RAIIガード）
+// 現在のスケジューラとしてアクティブ化（RAIIガード）
 {
-    auto reg = TaskSystem::RegisterScheduler(id);
+    auto activation = TaskSystem::ActivateScheduler(id);
 
     // ここで作成されたタスクはこのスケジューラを使用します
     MyTask().Forget();
 
-} // 自動的に登録解除されます
+    // 更新ループ
+    while (TaskSystem::GetPendingTaskCount(id) > 0)
+    {
+        TaskSystem::UpdateActivatedScheduler();
+    }
+
+} // 自動的に非アクティブ化されます
 
 // クリーンアップ
 TaskSystem::Shutdown();
@@ -215,21 +221,78 @@ Task<> UseResult()
 ### 並行タスク
 
 ```cpp
-Task<> ConcurrentExample()
+Task<> WhenAllExample()
 {
-    auto task1 = []() -> Task<> {
+    auto task1 = []() -> Task<int> {
         co_await WaitFor(2s);
-        std::printf("タスク1完了\n");
+        co_return 1;
     };
 
-    auto task2 = []() -> Task<> {
+    auto task2 = []() -> Task<int> {
         co_await WaitFor(3s);
-        std::printf("タスク2完了\n");
+        co_return 2;
     };
 
     // すべてのタスクが完了するまで待機
-    co_await WhenAll(task1(), task2());
-    std::printf("全タスク完了\n");
+    auto [result1, result2] = co_await WhenAll(task1(), task2());
+    std::printf("結果: %d, %d\n", result1, result2);
+}
+
+Task<> WhenAnyExample()
+{
+    auto task1 = []() -> Task<int> {
+        co_await WaitFor(2s);
+        co_return 1;
+    };
+
+    auto task2 = []() -> Task<int> {
+        co_await WaitFor(1s);
+        co_return 2;
+    };
+
+    // 最初に完了したタスクを待機
+    auto result = co_await WhenAny(task1(), task2());
+    // resultはstd::variant<int, int>
+    std::printf("最初に完了したインデックス: %zu\n", result.index());
+}
+```
+
+### スレッドプール操作
+
+```cpp
+Task<> ThreadPoolExample(TaskSchedulerId mainSchedulerId)
+{
+    // 重い計算のためにスレッドプールに切り替え
+    co_await SwitchToThreadPool();
+
+    // ワーカースレッドで実行中
+    auto result = HeavyComputation();
+
+    // メインスケジューラに戻る
+    co_await SwitchToSelectedScheduler(mainSchedulerId);
+
+    // メインスレッドに戻った
+    UpdateUI(result);
+}
+
+Task<> RunOnThreadPoolExample()
+{
+    // RunOnThreadPoolは自動的に元のスケジューラに戻る
+    int result = co_await RunOnThreadPool([]() {
+        return HeavyComputation();
+    });
+
+    // 自動的に元のスレッドに戻っている
+    UpdateUI(result);
+}
+
+Task<> RunOnThreadPoolWithTaskExample()
+{
+    // Task<T>を返す関数にも対応
+    auto data = co_await RunOnThreadPool([]() -> Task<std::vector<int>> {
+        co_await SomeAsyncOperation();
+        co_return ProcessData();
+    });
 }
 ```
 
@@ -241,7 +304,7 @@ Task<> CancellableTask(std::stop_token stopToken)
     for (int i = 0; i < 10; ++i)
     {
         // キャンセル確認
-        TASKKIT_STOP_TOKEN_PROCESS(stopToken);
+        ThrowIfStopRequested(stopToken);
 
         co_await DelayFrame(1);
         std::printf("反復 %d\n", i);
@@ -273,15 +336,17 @@ TaskAllocator myAllocator{
     }
 };
 
-// カスタムアロケータでTaskSystemを初期化
-auto config = TaskSystemConfigurationBuilder()
+// カスタム設定でTaskSystemを初期化
+auto config = TaskSystemConfiguration::Builder()
     .WithCustomAllocator(myAllocator)
+    .WithThreadPoolSize(4)        // ワーカースレッド数
+    .WithReservedTaskCount(200)   // スケジューラごとの予約タスク数
     .Build();
 
 TaskSystem::Initialize(config);
 ```
 
-> **注意**: デフォルトでは、TaskKitはヒープ確保のオーバーヘッドを削減する効率的なプールアロケータを使用します。カスタムアロケータは、メモリトラッキング、デバッグ、または既存のメモリ管理システムとの統合に便利です。
+> **注意**: デフォルトでは、TaskKitはヒープ確保のオーバーヘッドを削減する効率的なプールアロケータを使用します。スレッドプールサイズのデフォルトは`std::thread::hardware_concurrency()`です。
 
 ---
 
@@ -309,8 +374,9 @@ struct MyCustomEvent
 namespace TKit
 {
     template<>
-    struct AwaitTransformer<MyCustomEvent>
+    class AwaitTransformer<MyCustomEvent>
     {
+    public:
         static auto Transform(MyCustomEvent&& event)
         {
             // この型を処理するawaiterを返す
@@ -381,24 +447,28 @@ Task<> ProcessEvent()
 - **ムーブオンリー**: コピーはできず、ムーブのみ可能です
 - **即座実行**: 作成時に即座に開始されます
 
-#### `TaskScheduler`
-
-コルーチン実行を管理するフレームベーススケジューラです。
-
-- `Update()` - 現在のフレームで保留中のすべてのタスクを処理します
-- `GetPendingTaskCount()` - 実行待ちのタスク数を返します
-
 #### `TaskSystem`
 
-スレッドローカルストレージで複数のスケジューラを管理する静的クラスです。
+スケジューラとスレッドプールを管理する静的クラスです。
 
-- `Initialize(config)` - スレッドローカル状態を初期化します（使用前に必須）
-- `Shutdown()` - スレッドローカル状態をクリーンアップします
-- `CreateScheduler()` - 新しいスケジューラを作成し、IDを返します
-- `DestroyScheduler(id)` - スケジューラを削除します
-- `RegisterScheduler(id)` - スケジューラを現在のものとして設定するRAIIガードを返します
-- `GetScheduler(id)` - IDでスケジューラを取得します
-- `GetCurrentScheduler()` - 現在アクティブなスケジューラを取得します
+- `Initialize(config)` - オプションの設定でTaskSystemを初期化します
+- `Shutdown()` - クリーンアップしてスレッドプールを破棄します
+- `IsInitialized()` - TaskSystemが初期化されているかチェックします
+- `CreateScheduler(threadId, reservedCount)` - 新しいスケジューラを作成し、IDを返します
+- `ActivateScheduler(id)` - スケジューラをアクティブ化するRAIIガードを返します
+- `UpdateActivatedScheduler()` - アクティブなスケジューラの保留中のタスクを処理します
+- `GetPendingTaskCount(id)` - 保留中のタスク数を取得します
+- `GetActivatedSchedulerId()` - 現在アクティブなスケジューラIDを取得します
+- `Schedule(id, handle)` - コルーチンハンドルを特定のスケジューラにスケジュールします
+
+#### `TaskSystemConfiguration::Builder`
+
+TaskSystem設定のビルダーです。
+
+- `WithCustomAllocator(allocator)` - カスタムメモリアロケータを設定します
+- `WithThreadPoolSize(size)` - ワーカースレッド数を設定します（0 = hardware_concurrency）
+- `WithReservedTaskCount(count)` - スケジューラごとの予約タスクスロット数を設定します
+- `Build()` - 設定オブジェクトを作成します
 
 ### ユーティリティ関数
 
@@ -434,6 +504,47 @@ co_await WaitUntil(target);
 
 ```cpp
 auto [result1, result2] = co_await WhenAll(Task1(), Task2());
+```
+
+#### `WhenAny(tasks...)`
+
+最初に完了したタスクを待機し、結果のvariantを返します。
+
+```cpp
+auto result = co_await WhenAny(Task1(), Task2());
+// result.index()で最初に完了したタスクを判別
+```
+
+#### `SwitchToThreadPool()`
+
+コルーチンの実行をスレッドプールに切り替えます。
+
+```cpp
+co_await SwitchToThreadPool();
+// ワーカースレッドで実行中
+```
+
+#### `SwitchToSelectedScheduler(id)`
+
+コルーチンの実行を指定されたスケジューラに切り替えます。
+
+```cpp
+co_await SwitchToSelectedScheduler(mainSchedulerId);
+// メインスレッドで実行中
+```
+
+#### `RunOnThreadPool(func)`
+
+スレッドプールで関数を実行し、自動的に元のスケジューラに戻ります。
+
+```cpp
+// 通常の関数の場合
+int result = co_await RunOnThreadPool([]() { return compute(); });
+
+// Taskを返す関数の場合
+auto data = co_await RunOnThreadPool([]() -> Task<Data> {
+    co_return co_await AsyncCompute();
+});
 ```
 
 #### `GetCompletedTask()`
