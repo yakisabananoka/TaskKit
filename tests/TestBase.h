@@ -67,6 +67,12 @@ namespace TKit::Tests
 			}
 		}
 
+		[[nodiscard]]
+		TaskSchedulerId GetSchedulerId() const
+		{
+			return schedulerId_;
+		}
+
 	private:
 		TaskSchedulerId schedulerId_;
 		TaskSystem::SchedulerActivation registration_;

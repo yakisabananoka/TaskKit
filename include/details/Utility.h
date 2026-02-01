@@ -6,6 +6,8 @@
 #include <optional>
 #include <tuple>
 #include "Task.h"
+#include "TaskSchedulerId.h"
+#include "ThreadPool.h"
 
 namespace TKit
 {
@@ -65,6 +67,74 @@ namespace TKit
 			throw OperationStoppedError();
 		}
 	}
+
+	struct SwitchToThreadPoolAwaiter
+	{
+		[[nodiscard]]
+		bool await_ready() const noexcept
+		{
+			return false;
+		}
+
+		void await_suspend(std::coroutine_handle<> handle) const
+		{
+			PromiseContext::GetCurrent().GetThreadPool().Schedule(handle);
+		}
+
+		void await_resume() const noexcept
+		{
+		}
+	};
+
+	inline SwitchToThreadPoolAwaiter SwitchToThreadPool()
+	{
+		return SwitchToThreadPoolAwaiter{};
+	}
+
+	template<>
+	class AwaitTransformer<SwitchToThreadPoolAwaiter>
+	{
+	public:
+		static SwitchToThreadPoolAwaiter Transform(SwitchToThreadPoolAwaiter awaiter) noexcept
+		{
+			return awaiter;
+		}
+	};
+
+	struct SwitchToSelectedSchedulerAwaiter
+	{
+		TaskSchedulerId schedulerId;
+
+		[[nodiscard]]
+		bool await_ready() const noexcept
+		{
+			return false;
+		}
+
+		void await_suspend(std::coroutine_handle<> handle) const
+		{
+			PromiseContext::GetCurrent().GetSchedulerManager().Schedule(schedulerId, handle);
+		}
+
+		void await_resume() const noexcept
+		{
+		}
+	};
+
+	inline SwitchToSelectedSchedulerAwaiter SwitchToSelectedScheduler(TaskSchedulerId schedulerId)
+	{
+		return SwitchToSelectedSchedulerAwaiter{schedulerId};
+	}
+
+	template<>
+	class AwaitTransformer<SwitchToSelectedSchedulerAwaiter>
+	{
+	public:
+		static SwitchToSelectedSchedulerAwaiter Transform(SwitchToSelectedSchedulerAwaiter awaiter) noexcept
+		{
+			return awaiter;
+		}
+	};
 
 	inline Task<> GetCompletedTask()
 	{

@@ -1,4 +1,5 @@
 ﻿#include "TestBase.h"
+#include <latch>
 
 namespace TKit::Tests
 {
@@ -609,5 +610,106 @@ namespace TKit::Tests
 
 		EXPECT_EQ(result.index(), 0);
 		EXPECT_EQ(std::get<0>(result), 1);
+	}
+
+	TEST_F(UtilityTests, SwitchToThreadPool)
+	{
+		std::latch latch{1};
+		std::thread::id mainThreadId = std::this_thread::get_id();
+		std::thread::id workerThreadId;
+
+		auto task = [&]() -> Task<>
+		{
+			EXPECT_EQ(std::this_thread::get_id(), mainThreadId);
+
+			co_await TKit::SwitchToThreadPool();
+
+			workerThreadId = std::this_thread::get_id();
+			EXPECT_NE(workerThreadId, mainThreadId);
+			latch.count_down();
+			co_return;
+		};
+
+		task().Forget();
+		latch.wait();
+
+		EXPECT_NE(workerThreadId, std::thread::id{});
+		EXPECT_NE(workerThreadId, mainThreadId);
+	}
+
+	TEST_F(UtilityTests, SwitchToSelectedScheduler)
+	{
+		std::latch latch{1};
+		std::thread::id mainThreadId = std::this_thread::get_id();
+		auto mainSchedulerId = GetSchedulerId();
+		std::thread::id capturedThreadId;
+		bool switchedBack = false;
+
+		auto task = [&]() -> Task<>
+		{
+			EXPECT_EQ(std::this_thread::get_id(), mainThreadId);
+
+			co_await TKit::SwitchToThreadPool();
+
+			EXPECT_NE(std::this_thread::get_id(), mainThreadId);
+
+			co_await TKit::SwitchToSelectedScheduler(mainSchedulerId);
+
+			capturedThreadId = std::this_thread::get_id();
+			switchedBack = true;
+			latch.count_down();
+			co_return;
+		};
+
+		task().Forget();
+
+		while (!switchedBack)
+		{
+			RunScheduler(1);
+			std::this_thread::sleep_for(1ms);
+		}
+
+		latch.wait();
+
+		EXPECT_EQ(capturedThreadId, mainThreadId);
+	}
+
+	TEST_F(UtilityTests, SwitchToSelectedSchedulerMultipleSwitches)
+	{
+		std::latch latch{1};
+		std::thread::id mainThreadId = std::this_thread::get_id();
+		auto mainSchedulerId = GetSchedulerId();
+		int switchCount = 0;
+		bool completed = false;
+
+		auto task = [&]() -> Task<>
+		{
+			for (int i = 0; i < 3; ++i)
+			{
+				co_await TKit::SwitchToThreadPool();
+				EXPECT_NE(std::this_thread::get_id(), mainThreadId);
+				switchCount++;
+
+				co_await TKit::SwitchToSelectedScheduler(mainSchedulerId);
+				EXPECT_EQ(std::this_thread::get_id(), mainThreadId);
+				switchCount++;
+			}
+
+			completed = true;
+			latch.count_down();
+			co_return;
+		};
+
+		task().Forget();
+
+		while (!completed)
+		{
+			RunScheduler(1);
+			std::this_thread::sleep_for(1ms);
+		}
+
+		latch.wait();
+
+		EXPECT_EQ(switchCount, 6);
 	}
 }
