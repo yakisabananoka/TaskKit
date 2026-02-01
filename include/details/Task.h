@@ -142,12 +142,12 @@ namespace TKit
 	public:
 		void* operator new(std::size_t size)
 		{
-			return PromiseContext::GetCurrent().Allocate(size);
+			return PromiseContext::GetCurrent().GetAllocator().Allocate(size);
 		}
 
 		void operator delete(void* ptr, std::size_t size) noexcept
 		{
-			PromiseContext::GetCurrent().Deallocate(ptr, size);
+			PromiseContext::GetCurrent().GetAllocator().Deallocate(ptr, size);
 		}
 
 		[[nodiscard]]
@@ -180,7 +180,8 @@ namespace TKit
 		std::suspend_always yield_value(std::monostate)
 		{
 			auto& context = PromiseContext::GetCurrent();
-			context.Schedule(context.GetActivatedSchedulerId(), Handle::from_promise(*this));
+			auto& schedulerManager = context.GetSchedulerManager();
+			schedulerManager.Schedule(schedulerManager.GetActivatedSchedulerId(), Handle::from_promise(*this));
 			return {};
 		}
 
