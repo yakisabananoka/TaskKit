@@ -1,4 +1,4 @@
-﻿#ifndef TASKKIT_TASKSCHEDULER_MANAGER_H
+#ifndef TASKKIT_TASKSCHEDULER_MANAGER_H
 #define TASKKIT_TASKSCHEDULER_MANAGER_H
 #include <cassert>
 #include <stack>
@@ -17,26 +17,25 @@ namespace TKit
 			std::stack<std::size_t> internalIdStack;
 			std::vector<TaskScheduler> schedulers;
 		};
+
 	public:
-		explicit TaskSchedulerManager(const std::unordered_map<std::thread::id, std::size_t>& threadIdToTaskSchedulerCount)
-		{
-			for (const auto& [threadId, count]: threadIdToTaskSchedulerCount)
-			{
-				threadContexts_.emplace(threadId, ThreadContext{});
-				for (std::size_t i = 0; i < count; ++i)
-				{
-					CreateScheduler(threadId);
-				}
-			}
-		}
+		TaskSchedulerManager() = default;
 		~TaskSchedulerManager() = default;
+
+		TaskSchedulerId CreateScheduler(std::thread::id threadId, std::size_t reservedTaskCount)
+		{
+			auto& context = threadContexts_[threadId];
+			context.schedulers.emplace_back(reservedTaskCount);
+			return {threadId, context.schedulers.size() - 1};
+		}
 
 		void Schedule(const TaskSchedulerId& id, std::coroutine_handle<> handle)
 		{
 			assert(threadContexts_.contains(id.GetThreadId()) && "TaskSchedulerManager: called from unregistered thread");
-			const auto& schedulers = threadContexts_.at(id.GetThreadId()).schedulers;
+			auto& schedulers = threadContexts_.at(id.GetThreadId()).schedulers;
 			assert(id.GetInternalId() < schedulers.size() && "TaskSchedulerManager: invalid scheduler id");
-			threadContexts_.at(id.GetThreadId()).schedulers.at(id.GetInternalId()).Schedule(handle);
+
+			schedulers.at(id.GetInternalId()).Schedule(handle);
 		}
 
 		void ActivateScheduler(const TaskSchedulerId& id)
@@ -74,37 +73,17 @@ namespace TKit
 			GetScheduler(GetActivatedSchedulerId()).Update();
 		}
 
-		std::vector<TaskSchedulerId> GetAllSchedulerIds() const
-		{
-			std::vector<TaskSchedulerId> ids;
-			for (const auto& [threadId, context] : threadContexts_)
-			{
-				for (std::size_t i = 0; i < context.schedulers.size(); ++i)
-				{
-					ids.emplace_back(threadId, i);
-				}
-			}
-			return ids;
-		}
-
-		std::vector<TaskSchedulerId> GetThreadSchedulerIds(std::thread::id threadId) const
-		{
-			assert(threadContexts_.contains(threadId) && "TaskSchedulerManager: called from unregistered thread");
-
-			std::vector<TaskSchedulerId> ids;
-			const auto& schedulers = threadContexts_.at(threadId).schedulers;
-			ids.reserve(schedulers.size());
-			for (std::size_t i = 0; i < schedulers.size(); ++i)
-			{
-				ids.emplace_back(threadId, i);
-			}
-			return ids;
-		}
-
 		[[nodiscard]]
 		std::size_t GetPendingTaskCount(const TaskSchedulerId& id) const
 		{
 			return GetScheduler(id).GetPendingTaskCount();
+		}
+
+		[[nodiscard]]
+		bool HasSchedulers(std::thread::id threadId) const
+		{
+			auto it = threadContexts_.find(threadId);
+			return it != threadContexts_.end() && !it->second.schedulers.empty();
 		}
 
 		TaskSchedulerManager(const TaskSchedulerManager&) = delete;
@@ -113,19 +92,12 @@ namespace TKit
 		TaskSchedulerManager& operator=(TaskSchedulerManager&&) = delete;
 
 	private:
-		TaskSchedulerId CreateScheduler(std::thread::id threadId)
-		{
-			auto& schedulers = threadContexts_.at(threadId).schedulers;
-			schedulers.emplace_back(100);
-			return {threadId, schedulers.size() - 1};
-		}
-
 		TaskScheduler& GetScheduler(const TaskSchedulerId& id)
 		{
 			assert(threadContexts_.contains(id.GetThreadId()) && "TaskSchedulerManager: called from unregistered thread");
-			const auto& schedulers = threadContexts_.at(id.GetThreadId()).schedulers;
+			auto& schedulers = threadContexts_.at(id.GetThreadId()).schedulers;
 			assert(id.GetInternalId() < schedulers.size() && "TaskSchedulerManager: invalid scheduler id");
-			return threadContexts_.at(id.GetThreadId()).schedulers.at(id.GetInternalId());
+			return schedulers.at(id.GetInternalId());
 		}
 
 		const TaskScheduler& GetScheduler(const TaskSchedulerId& id) const
@@ -133,7 +105,7 @@ namespace TKit
 			assert(threadContexts_.contains(id.GetThreadId()) && "TaskSchedulerManager: called from unregistered thread");
 			const auto& schedulers = threadContexts_.at(id.GetThreadId()).schedulers;
 			assert(id.GetInternalId() < schedulers.size() && "TaskSchedulerManager: invalid scheduler id");
-			return threadContexts_.at(id.GetThreadId()).schedulers.at(id.GetInternalId());
+			return schedulers.at(id.GetInternalId());
 		}
 
 		std::unordered_map<std::thread::id, ThreadContext> threadContexts_;

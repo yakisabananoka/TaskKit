@@ -10,7 +10,6 @@ namespace TKit
 		class Builder;
 
 		std::optional<TaskAllocator> allocator;
-		std::size_t mainThreadSchedulerCount = 1;
 	};
 
 	class TaskSystemConfiguration::Builder
@@ -21,12 +20,6 @@ namespace TKit
 		Builder& WithCustomAllocator(const TaskAllocator& allocator)
 		{
 			configuration_.allocator = allocator;
-			return *this;
-		}
-
-		Builder& WithMainThreadSchedulerCount(std::size_t count)
-		{
-			configuration_.mainThreadSchedulerCount = count;
 			return *this;
 		}
 

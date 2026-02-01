@@ -3,7 +3,6 @@
 
 #include <cassert>
 #include <cstddef>
-#include <unordered_map>
 #include "TaskSystemConfiguration.h"
 #include "PoolAllocator.h"
 #include "TaskSchedulerId.h"
@@ -65,11 +64,7 @@ namespace TKit
 			assert(!IsInitialized() && "TaskSystem already initialized for this thread.");
 			auto& sharedState = GetSharedState();
 			sharedState.mainThreadId = std::this_thread::get_id();
-			sharedState.schedulerManager.emplace(std::unordered_map<std::thread::id, std::size_t>
-				{
-					{std::this_thread::get_id(), config.mainThreadSchedulerCount}
-				}
-			);
+			sharedState.schedulerManager.emplace();
 
 			sharedState.useDefaultAllocator = !config.allocator.has_value();
 			if (sharedState.useDefaultAllocator)
@@ -118,37 +113,47 @@ namespace TKit
 		static TaskSchedulerId GetActivatedSchedulerId()
 		{
 			assert(IsInitialized() && "TaskSystem not initialized for this thread. Call TaskSystem::Initialize() first.");
+
 			return GetSchedulerManager().GetActivatedSchedulerId();
 		}
 
 		[[nodiscard]]
 		static SchedulerActivation ActivateScheduler(const TaskSchedulerId& id)
 		{
+			assert(IsInitialized() && "TaskSystem not initialized for this thread. Call TaskSystem::Initialize() first.");
+			assert(id.GetThreadId() == std::this_thread::get_id() && "Cannot activate scheduler for different thread.");
+
 			return SchedulerActivation{id};
 		}
 
 		static void UpdateActivatedScheduler()
 		{
 			assert(IsInitialized() && "TaskSystem not initialized for this thread. Call TaskSystem::Initialize() first.");
-			GetSchedulerManager().UpdateActivatedScheduler();
-		}
 
-		static std::vector<TaskSchedulerId> GetMainThreadSchedulerIds()
-		{
-			assert(IsInitialized() && "TaskSystem not initialized for this thread. Call TaskSystem::Initialize() first.");
-			return GetSchedulerManager().GetThreadSchedulerIds(GetSharedState().mainThreadId);
+			GetSchedulerManager().UpdateActivatedScheduler();
 		}
 
 		static std::size_t GetPendingTaskCount(const TaskSchedulerId& id)
 		{
 			assert(IsInitialized() && "TaskSystem not initialized for this thread. Call TaskSystem::Initialize() first.");
+
 			return GetSchedulerManager().GetPendingTaskCount(id);
 		}
 
 		static void Schedule(const TaskSchedulerId& id, std::coroutine_handle<> handle)
 		{
 			assert(IsInitialized() && "TaskSystem not initialized for this thread. Call TaskSystem::Initialize() first.");
+
 			GetSchedulerManager().Schedule(id, handle);
+		}
+
+		[[nodiscard]]
+		static TaskSchedulerId CreateScheduler(std::optional<std::thread::id> threadId = std::nullopt, std::size_t reservedTaskCount = 100)
+		{
+			assert(IsInitialized() && "TaskSystem not initialized for this thread. Call TaskSystem::Initialize() first.");
+			assert(GetSharedState().mainThreadId == std::this_thread::get_id() && "CreateScheduler: Cannot create scheduler for different thread.");
+
+			return GetSchedulerManager().CreateScheduler(threadId.value_or(std::this_thread::get_id()), reservedTaskCount);
 		}
 
 	private:

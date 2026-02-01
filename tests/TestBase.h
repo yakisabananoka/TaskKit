@@ -15,8 +15,7 @@ namespace TKit::Tests
 		void SetUp() override
 		{
 			TaskSystem::Initialize();
-			const auto ids = TaskSystem::GetMainThreadSchedulerIds();
-			schedulerId_ = ids[0];
+			schedulerId_ = TaskSystem::CreateScheduler();
 			registration_ = TaskSystem::ActivateScheduler(schedulerId_);
 		}
 

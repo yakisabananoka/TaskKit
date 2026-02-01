@@ -47,8 +47,7 @@ namespace TKit::Tests
 
 		TaskSystem::Initialize(config);
 
-		const auto ids = TaskSystem::GetMainThreadSchedulerIds();
-		const auto schedulerId = ids[0];
+		const auto schedulerId = TaskSystem::CreateScheduler();
 		{
 			auto registration = TaskSystem::ActivateScheduler(schedulerId);
 
@@ -122,8 +121,7 @@ namespace TKit::Tests
 
 		TaskSystem::Initialize(config);
 
-		const auto ids = TaskSystem::GetMainThreadSchedulerIds();
-		const auto schedulerId = ids[0];
+		const auto schedulerId = TaskSystem::CreateScheduler();
 		{
 			auto registration = TaskSystem::ActivateScheduler(schedulerId);
 
@@ -203,8 +201,7 @@ namespace TKit::Tests
 
 		TaskSystem::Initialize(config);
 
-		const auto ids = TaskSystem::GetMainThreadSchedulerIds();
-		const auto schedulerId = ids[0];
+		const auto schedulerId = TaskSystem::CreateScheduler();
 		{
 			auto registration = TaskSystem::ActivateScheduler(schedulerId);
 
@@ -256,8 +253,7 @@ namespace TKit::Tests
 
 		TaskSystem::Initialize(config);
 
-		const auto ids = TaskSystem::GetMainThreadSchedulerIds();
-		const auto schedulerId = ids[0];
+		const auto schedulerId = TaskSystem::CreateScheduler();
 		{
 			auto registration = TaskSystem::ActivateScheduler(schedulerId);
 
