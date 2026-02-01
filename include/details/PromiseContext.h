@@ -7,13 +7,15 @@ namespace TKit
 {
 	class TaskAllocator;
 	class TaskSchedulerManager;
+	class ThreadPool;
 
 	class PromiseContext final
 	{
 	public:
-		PromiseContext(TaskAllocator& allocator, TaskSchedulerManager& schedulerManager) noexcept :
+		PromiseContext(TaskAllocator& allocator, TaskSchedulerManager& schedulerManager, ThreadPool& threadPool) noexcept :
 			allocator_(&allocator),
-			schedulerManager_(&schedulerManager)
+			schedulerManager_(&schedulerManager),
+			threadPool_(&threadPool)
 		{
 		}
 
@@ -41,9 +43,16 @@ namespace TKit
 			return *schedulerManager_;
 		}
 
+		[[nodiscard]]
+		ThreadPool& GetThreadPool() const noexcept
+		{
+			return *threadPool_;
+		}
+
 	private:
 		TaskAllocator* allocator_;
 		TaskSchedulerManager* schedulerManager_;
+		ThreadPool* threadPool_;
 
 		static inline PromiseContext* currentContext_ = nullptr;
 	};

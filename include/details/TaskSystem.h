@@ -7,6 +7,7 @@
 #include "PoolAllocator.h"
 #include "TaskSchedulerId.h"
 #include "TaskSchedulerManager.h"
+#include "ThreadPool.h"
 #include "PromiseContext.h"
 
 namespace TKit
@@ -77,7 +78,16 @@ namespace TKit
 				sharedState.allocator = config.allocator.value();
 			}
 
-			sharedState.promiseContext.emplace(sharedState.allocator, *sharedState.schedulerManager);
+			const auto threadCount = config.threadPoolSize > 0
+				? config.threadPoolSize
+				: std::thread::hardware_concurrency();
+			sharedState.threadPool = std::make_unique<ThreadPool>(
+				*sharedState.schedulerManager,
+				threadCount,
+				config.reservedTaskCount
+			);
+
+			sharedState.promiseContext.emplace(sharedState.allocator, *sharedState.schedulerManager, *sharedState.threadPool);
 			PromiseContext::SetCurrent(&sharedState.promiseContext.value());
 
 			sharedState.isInitialized = true;
@@ -89,6 +99,7 @@ namespace TKit
 			auto& sharedState = GetSharedState();
 			assert(std::this_thread::get_id() == sharedState.mainThreadId && "TaskSystem main thread mismatch.");
 
+			sharedState.threadPool.reset();
 			sharedState.schedulerManager.reset();
 
 			PromiseContext::SetCurrent(nullptr);
@@ -163,6 +174,7 @@ namespace TKit
 			std::thread::id mainThreadId;
 			TaskAllocator allocator;
 			std::optional<TaskSchedulerManager> schedulerManager;
+			std::unique_ptr<ThreadPool> threadPool;
 			std::optional<PromiseContext> promiseContext;
 			bool useDefaultAllocator = true;
 			bool isInitialized = false;
