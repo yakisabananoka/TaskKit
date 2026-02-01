@@ -1,130 +1,154 @@
 #ifndef TASKKIT_TASK_SCHEDULER_H
 #define TASKKIT_TASK_SCHEDULER_H
 
-#include <algorithm>
+#include <atomic>
 #include <coroutine>
-#include <queue>
+#include <vector>
 #include <thread>
 
 namespace TKit
 {
 	class TaskScheduler final
 	{
+		struct RemoteNode
+		{
+			RemoteNode* next;
+			std::coroutine_handle<> handle;
+		};
+
 	public:
-		explicit TaskScheduler([[maybe_unused]] std::size_t reservedTaskCount)
+		explicit TaskScheduler(std::size_t reservedTaskCount) :
+			ownerId_(std::this_thread::get_id())
 		{
 			handles_.reserve(reservedTaskCount);
 			updateHandles_.reserve(reservedTaskCount);
 		}
+
 		~TaskScheduler()
 		{
-			LockHandles();
-			LockUpdateHandles();
-			for (const auto& handle: handles_)
+			for (const auto& handle : handles_)
 			{
 				handle.destroy();
 			}
-			for (const auto& handle: updateHandles_)
+			for (const auto& handle : updateHandles_)
 			{
 				handle.destroy();
 			}
-			UnlockUpdateHandles();
-			UnlockHandles();
+
+			RemoteNode* head = remoteHead_.load(std::memory_order_acquire);
+			while (head)
+			{
+				RemoteNode* current = head;
+				head = head->next;
+				current->handle.destroy();
+				delete current;
+			}
 		}
 
 		void Update()
 		{
-			LockUpdateHandles();
-
-			LockHandles();
+			CollectRemote();
 			std::swap(updateHandles_, handles_);
-			UnlockHandles();
 
 			for (const auto& handle : updateHandles_)
 			{
 				handle.resume();
 			}
 			updateHandles_.clear();
-
-			UnlockUpdateHandles();
 		}
 
 		void Schedule(std::coroutine_handle<> handle)
 		{
-			LockHandles();
-			handles_.emplace_back(handle);
-			UnlockHandles();
+			if (std::this_thread::get_id() == ownerId_)
+			{
+				handles_.emplace_back(handle);
+			}
+			else
+			{
+				PushRemote(handle);
+			}
 		}
 
 		[[nodiscard]]
 		std::size_t GetPendingTaskCount() const
 		{
-			LockHandles();
 			std::size_t count = handles_.size();
-			UnlockHandles();
+
+			RemoteNode* node = remoteHead_.load(std::memory_order_acquire);
+			while (node)
+			{
+				++count;
+				node = node->next;
+			}
 
 			return count;
 		}
 
 		TaskScheduler(const TaskScheduler&) = delete;
 		TaskScheduler& operator=(const TaskScheduler&) = delete;
-		TaskScheduler(TaskScheduler&& other) noexcept
+
+		TaskScheduler(TaskScheduler&& other) noexcept :
+			ownerId_(other.ownerId_),
+			handles_(std::move(other.handles_)),
+			updateHandles_(std::move(other.updateHandles_)),
+			remoteHead_(other.remoteHead_.exchange(nullptr, std::memory_order_acquire))
 		{
-			operator=(std::move(other));
 		}
+
 		TaskScheduler& operator=(TaskScheduler&& other) noexcept
 		{
 			if (this != &other)
 			{
-				LockHandles();
-				LockUpdateHandles();
-
-				other.LockHandles();
-				other.LockUpdateHandles();
-
+				ownerId_ = other.ownerId_;
 				handles_ = std::move(other.handles_);
 				updateHandles_ = std::move(other.updateHandles_);
 
-				other.UnlockUpdateHandles();
-				other.UnlockHandles();
-
-				UnlockUpdateHandles();
-				UnlockHandles();
+				RemoteNode* oldHead = remoteHead_.exchange(nullptr, std::memory_order_acquire);
+				while (oldHead)
+				{
+					RemoteNode* next = oldHead->next;
+					delete oldHead;
+					oldHead = next;
+				}
+				remoteHead_.store(
+					other.remoteHead_.exchange(nullptr, std::memory_order_acquire),
+					std::memory_order_release
+				);
 			}
 			return *this;
 		}
 
 	private:
-		void LockHandles() const
+		void CollectRemote()
 		{
-			while (handlesLock_.test_and_set(std::memory_order_acquire))
+			RemoteNode* head = remoteHead_.exchange(nullptr, std::memory_order_acquire);
+			while (head)
 			{
-				std::this_thread::yield();
+				RemoteNode* current = head;
+				head = head->next;
+				handles_.emplace_back(current->handle);
+				delete current;
 			}
 		}
 
-		void UnlockHandles() const
+		void PushRemote(std::coroutine_handle<> handle)
 		{
-			handlesLock_.clear(std::memory_order_release);
-		}
+			auto* node = new RemoteNode{nullptr, handle};
 
-		void LockUpdateHandles() const
-		{
-			while (updateHandlesLock_.test_and_set(std::memory_order_acquire))
+			RemoteNode* oldHead = remoteHead_.load(std::memory_order_relaxed);
+			do
 			{
-				std::this_thread::yield();
-			}
+				node->next = oldHead;
+			} while (!remoteHead_.compare_exchange_weak(
+				oldHead, node,
+				std::memory_order_release,
+				std::memory_order_relaxed));
 		}
 
-		void UnlockUpdateHandles() const
-		{
-			updateHandlesLock_.clear(std::memory_order_release);
-		}
-
+		std::thread::id ownerId_;
 		std::vector<std::coroutine_handle<>> handles_;
 		std::vector<std::coroutine_handle<>> updateHandles_;
-		mutable std::atomic_flag handlesLock_ = ATOMIC_FLAG_INIT;
-		mutable std::atomic_flag updateHandlesLock_ = ATOMIC_FLAG_INIT;
+		std::atomic<RemoteNode*> remoteHead_{nullptr};
 	};
 }
 
