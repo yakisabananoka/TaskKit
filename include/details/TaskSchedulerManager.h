@@ -25,7 +25,7 @@ namespace TKit
 		TaskSchedulerId CreateScheduler(std::thread::id threadId, std::size_t reservedTaskCount)
 		{
 			auto& context = threadContexts_[threadId];
-			context.schedulers.emplace_back(reservedTaskCount);
+			context.schedulers.emplace_back(reservedTaskCount, threadId);
 			return {threadId, context.schedulers.size() - 1};
 		}
 

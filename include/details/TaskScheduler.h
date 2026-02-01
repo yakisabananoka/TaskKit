@@ -17,8 +17,8 @@ namespace TKit
 		};
 
 	public:
-		explicit TaskScheduler(std::size_t reservedTaskCount) :
-			ownerId_(std::this_thread::get_id())
+		explicit TaskScheduler(std::size_t reservedTaskCount, std::thread::id ownerId = std::thread::id{}) :
+			ownerId_(ownerId == std::thread::id{} ? std::this_thread::get_id() : ownerId)
 		{
 			handles_.reserve(reservedTaskCount);
 			updateHandles_.reserve(reservedTaskCount);
