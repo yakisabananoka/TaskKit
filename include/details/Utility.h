@@ -13,6 +13,22 @@ namespace TKit
 {
 	namespace Details
 	{
+		template<typename T>
+		struct TaskTraits
+		{
+			static constexpr bool IsTask = false;
+		};
+
+		template<typename T>
+		struct TaskTraits<Task<T>>
+		{
+			using ResultType = T;
+			static constexpr bool IsTask = true;
+		};
+
+		template<typename T>
+		using TaskFuncTraits = TaskTraits<std::invoke_result_t<T>>;
+
 		template<typename T, typename... Results>
 		constexpr bool FulfillsAllType = (std::is_same_v<T, Results> && ...);
 
@@ -135,6 +151,48 @@ namespace TKit
 			return awaiter;
 		}
 	};
+
+	template<typename Func>
+		requires std::is_invocable_v<Func> && (!Details::TaskFuncTraits<Func>::IsTask)
+	inline Task<std::invoke_result_t<Func>> RunOnThreadPool(Func&& func)
+	{
+		auto originalSchedulerId = PromiseContext::GetCurrent().GetSchedulerManager().GetActivatedSchedulerId();
+		co_await SwitchToThreadPool();
+
+		if constexpr (std::is_void_v<std::invoke_result_t<Func>>)
+		{
+			std::forward<Func>(func)();
+			co_await SwitchToSelectedScheduler(originalSchedulerId);
+			co_return;
+		}
+		else
+		{
+			auto result = std::forward<Func>(func)();
+			co_await SwitchToSelectedScheduler(originalSchedulerId);
+			co_return std::move(result);
+		}
+	}
+
+	template<typename Func>
+	requires std::is_invocable_v<Func> && (Details::TaskFuncTraits<Func>::IsTask)
+	inline Task<typename Details::TaskFuncTraits<Func>::ResultType> RunOnThreadPool(Func&& func)
+	{
+		auto originalSchedulerId = PromiseContext::GetCurrent().GetSchedulerManager().GetActivatedSchedulerId();
+		co_await SwitchToThreadPool();
+
+		if constexpr (std::is_void_v<typename Details::TaskFuncTraits<Func>::ResultType>)
+		{
+			co_await std::forward<Func>(func)();
+			co_await SwitchToSelectedScheduler(originalSchedulerId);
+			co_return;
+		}
+		else
+		{
+			auto result = co_await std::forward<Func>(func)();
+			co_await SwitchToSelectedScheduler(originalSchedulerId);
+			co_return std::move(result);
+		}
+	}
 
 	inline Task<> GetCompletedTask()
 	{

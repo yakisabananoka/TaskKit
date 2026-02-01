@@ -712,4 +712,176 @@ namespace TKit::Tests
 
 		EXPECT_EQ(switchCount, 6);
 	}
+
+	TEST_F(UtilityTests, RunOnThreadPoolVoidFunction)
+	{
+		std::latch latch{1};
+		std::thread::id mainThreadId = std::this_thread::get_id();
+		std::thread::id workerThreadId;
+		bool completed = false;
+
+		auto task = [&]() -> Task<>
+		{
+			EXPECT_EQ(std::this_thread::get_id(), mainThreadId);
+
+			co_await RunOnThreadPool([&]()
+			{
+				workerThreadId = std::this_thread::get_id();
+			});
+
+			EXPECT_EQ(std::this_thread::get_id(), mainThreadId);
+			completed = true;
+			latch.count_down();
+			co_return;
+		};
+
+		task().Forget();
+
+		while (!completed)
+		{
+			RunScheduler(1);
+			std::this_thread::sleep_for(1ms);
+		}
+
+		latch.wait();
+
+		EXPECT_NE(workerThreadId, mainThreadId);
+	}
+
+	TEST_F(UtilityTests, RunOnThreadPoolWithReturnValue)
+	{
+		std::latch latch{1};
+		std::thread::id mainThreadId = std::this_thread::get_id();
+		int result = 0;
+		bool completed = false;
+
+		auto task = [&]() -> Task<>
+		{
+			EXPECT_EQ(std::this_thread::get_id(), mainThreadId);
+
+			result = co_await RunOnThreadPool([]()
+			{
+				return 42;
+			});
+
+			EXPECT_EQ(std::this_thread::get_id(), mainThreadId);
+			completed = true;
+			latch.count_down();
+			co_return;
+		};
+
+		task().Forget();
+
+		while (!completed)
+		{
+			RunScheduler(1);
+			std::this_thread::sleep_for(1ms);
+		}
+
+		latch.wait();
+
+		EXPECT_EQ(result, 42);
+	}
+
+	TEST_F(UtilityTests, RunOnThreadPoolWithTaskVoid)
+	{
+		std::latch latch{1};
+		std::thread::id mainThreadId = std::this_thread::get_id();
+		std::thread::id workerThreadId;
+		bool completed = false;
+
+		auto task = [&]() -> Task<>
+		{
+			EXPECT_EQ(std::this_thread::get_id(), mainThreadId);
+
+			co_await RunOnThreadPool([&]() -> Task<>
+			{
+				workerThreadId = std::this_thread::get_id();
+				co_return;
+			});
+
+			EXPECT_EQ(std::this_thread::get_id(), mainThreadId);
+			completed = true;
+			latch.count_down();
+			co_return;
+		};
+
+		task().Forget();
+
+		while (!completed)
+		{
+			RunScheduler(1);
+			std::this_thread::sleep_for(1ms);
+		}
+
+		latch.wait();
+
+		EXPECT_NE(workerThreadId, mainThreadId);
+	}
+
+	TEST_F(UtilityTests, RunOnThreadPoolWithTaskReturnValue)
+	{
+		std::latch latch{1};
+		std::thread::id mainThreadId = std::this_thread::get_id();
+		int result = 0;
+		bool completed = false;
+
+		auto task = [&]() -> Task<>
+		{
+			EXPECT_EQ(std::this_thread::get_id(), mainThreadId);
+
+			result = co_await RunOnThreadPool([]() -> Task<int>
+			{
+				co_return 42;
+			});
+
+			EXPECT_EQ(std::this_thread::get_id(), mainThreadId);
+			completed = true;
+			latch.count_down();
+			co_return;
+		};
+
+		task().Forget();
+
+		while (!completed)
+		{
+			RunScheduler(1);
+			std::this_thread::sleep_for(1ms);
+		}
+
+		latch.wait();
+
+		EXPECT_EQ(result, 42);
+	}
+
+	TEST_F(UtilityTests, RunOnThreadPoolReturnsToOriginalScheduler)
+	{
+		std::latch latch{1};
+		std::thread::id mainThreadId = std::this_thread::get_id();
+		bool completed = false;
+
+		auto task = [&]() -> Task<>
+		{
+			for (int i = 0; i < 3; ++i)
+			{
+				co_await RunOnThreadPool([]() {});
+
+				EXPECT_EQ(std::this_thread::get_id(), mainThreadId);
+			}
+
+			completed = true;
+			latch.count_down();
+			co_return;
+		};
+
+		task().Forget();
+
+		while (!completed)
+		{
+			RunScheduler(1);
+			std::this_thread::sleep_for(1ms);
+		}
+
+		latch.wait();
+	}
 }
