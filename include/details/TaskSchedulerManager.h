@@ -1,89 +1,88 @@
 #ifndef TASKKIT_TASKSCHEDULER_MANAGER_H
 #define TASKKIT_TASKSCHEDULER_MANAGER_H
+
 #include <cassert>
-#include <stack>
+#include <coroutine>
+#include <memory>
+#include <mutex>
 #include <thread>
-#include <unordered_map>
-#include "Exceptions.h"
+#include <vector>
 #include "TaskScheduler.h"
 #include "TaskSchedulerId.h"
 
 namespace TKit
 {
+	// Owns all TaskSchedulers. Creation is mutex-guarded and may happen from any
+	// thread; schedulers get stable addresses so a TaskSchedulerId can point at
+	// them directly and the hot scheduling paths need no lookups or locks.
+	//
+	// The activation stack is a per-thread notion, kept in thread-local storage:
+	// activating a scheduler never touches shared state.
 	class TaskSchedulerManager final
 	{
-		struct ThreadContext final
-		{
-			std::stack<std::size_t> internalIdStack;
-			std::vector<TaskScheduler> schedulers;
-		};
-
 	public:
 		TaskSchedulerManager() = default;
 		~TaskSchedulerManager() = default;
 
 		TaskSchedulerId CreateScheduler(std::thread::id threadId, std::size_t reservedTaskCount)
 		{
-			auto& context = threadContexts_[threadId];
-			context.schedulers.emplace_back(reservedTaskCount, threadId);
-			return {threadId, context.schedulers.size() - 1};
+			auto scheduler = std::make_unique<TaskScheduler>(reservedTaskCount, threadId);
+			const TaskSchedulerId id{scheduler.get()};
+
+			std::lock_guard lock(mutex_);
+			schedulers_.push_back(std::move(scheduler));
+			return id;
 		}
 
 		void Schedule(const TaskSchedulerId& id, std::coroutine_handle<> handle)
 		{
-			assert(threadContexts_.contains(id.GetThreadId()) && "TaskSchedulerManager: called from unregistered thread");
-			auto& schedulers = threadContexts_.at(id.GetThreadId()).schedulers;
-			assert(id.GetInternalId() < schedulers.size() && "TaskSchedulerManager: invalid scheduler id");
-
-			schedulers.at(id.GetInternalId()).Schedule(handle);
+			assert(id.IsValid() && "TaskSchedulerManager::Schedule: invalid scheduler id");
+			id.GetScheduler()->Schedule(handle);
 		}
 
 		void ActivateScheduler(const TaskSchedulerId& id)
 		{
-			assert(std::this_thread::get_id() == id.GetThreadId() && "TaskSchedulerManager: called from different thread");
-			assert(threadContexts_.contains(id.GetThreadId()) && "TaskSchedulerManager: called from unregistered thread");
-			const auto& schedulers = threadContexts_.at(id.GetThreadId()).schedulers;
-			assert(id.GetInternalId() < schedulers.size() && "TaskSchedulerManager: invalid scheduler id");
-
-			threadContexts_.at(id.GetThreadId()).internalIdStack.push(id.GetInternalId());
+			assert(id.IsValid() && "TaskSchedulerManager::ActivateScheduler: invalid scheduler id");
+			assert(std::this_thread::get_id() == id.GetThreadId() && "TaskSchedulerManager: cannot activate a scheduler owned by another thread");
+			ActivationStack().push_back(id.GetScheduler());
 		}
 
 		void DeactivateScheduler()
 		{
-			const auto threadId = std::this_thread::get_id();
-			assert(threadContexts_.contains(threadId) && "TaskSchedulerManager: called from unregistered thread");
-			const auto& stack = threadContexts_.at(threadId).internalIdStack;
+			auto& stack = ActivationStack();
 			assert(!stack.empty() && "TaskSchedulerManager: no active scheduler in current context");
-
-			threadContexts_.at(threadId).internalIdStack.pop();
+			stack.pop_back();
 		}
 
+		[[nodiscard]]
 		TaskSchedulerId GetActivatedSchedulerId() const
 		{
-			const auto threadId = std::this_thread::get_id();
-			assert(threadContexts_.contains(threadId) && "TaskSchedulerManager: called from unregistered thread");
-			const auto& stack = threadContexts_.at(threadId).internalIdStack;
+			auto& stack = ActivationStack();
 			assert(!stack.empty() && "TaskSchedulerManager: no active scheduler in current context");
-
-			return { threadId, stack.top() };
+			return TaskSchedulerId{stack.back()};
 		}
 
 		void UpdateActivatedScheduler()
 		{
-			GetScheduler(GetActivatedSchedulerId()).Update();
+			auto& stack = ActivationStack();
+			assert(!stack.empty() && "TaskSchedulerManager: no active scheduler in current context");
+			stack.back()->Update();
 		}
 
 		[[nodiscard]]
 		std::size_t GetPendingTaskCount(const TaskSchedulerId& id) const
 		{
-			return GetScheduler(id).GetPendingTaskCount();
+			assert(id.IsValid() && "TaskSchedulerManager::GetPendingTaskCount: invalid scheduler id");
+			return id.GetScheduler()->GetPendingTaskCount();
 		}
 
+		// The scheduler currently running on this thread, or nullptr outside of
+		// any activation.
 		[[nodiscard]]
-		bool HasSchedulers(std::thread::id threadId) const
+		static TaskScheduler* CurrentActiveScheduler() noexcept
 		{
-			auto it = threadContexts_.find(threadId);
-			return it != threadContexts_.end() && !it->second.schedulers.empty();
+			auto& stack = ActivationStack();
+			return stack.empty() ? nullptr : stack.back();
 		}
 
 		TaskSchedulerManager(const TaskSchedulerManager&) = delete;
@@ -92,23 +91,14 @@ namespace TKit
 		TaskSchedulerManager& operator=(TaskSchedulerManager&&) = delete;
 
 	private:
-		TaskScheduler& GetScheduler(const TaskSchedulerId& id)
+		static std::vector<TaskScheduler*>& ActivationStack() noexcept
 		{
-			assert(threadContexts_.contains(id.GetThreadId()) && "TaskSchedulerManager: called from unregistered thread");
-			auto& schedulers = threadContexts_.at(id.GetThreadId()).schedulers;
-			assert(id.GetInternalId() < schedulers.size() && "TaskSchedulerManager: invalid scheduler id");
-			return schedulers.at(id.GetInternalId());
+			static thread_local std::vector<TaskScheduler*> stack;
+			return stack;
 		}
 
-		const TaskScheduler& GetScheduler(const TaskSchedulerId& id) const
-		{
-			assert(threadContexts_.contains(id.GetThreadId()) && "TaskSchedulerManager: called from unregistered thread");
-			const auto& schedulers = threadContexts_.at(id.GetThreadId()).schedulers;
-			assert(id.GetInternalId() < schedulers.size() && "TaskSchedulerManager: invalid scheduler id");
-			return schedulers.at(id.GetInternalId());
-		}
-
-		std::unordered_map<std::thread::id, ThreadContext> threadContexts_;
+		mutable std::mutex mutex_;
+		std::vector<std::unique_ptr<TaskScheduler>> schedulers_;
 	};
 }
 

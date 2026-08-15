@@ -27,6 +27,21 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# Some MinGW distributions ship a libmingw32.a that requires the UCRT
+# (__imp__Exit / __imp_quick_exit) while still linking msvcrt by default,
+# which breaks linking anything that touches the quick_exit family (e.g.
+# Google Test). Switch to the UCRT when the toolchain provides it.
+if(MINGW)
+    include(CheckCXXSourceCompiles)
+    set(CMAKE_REQUIRED_LINK_OPTIONS -mcrtdll=ucrt)
+    check_cxx_source_compiles("#include <cstdlib>\nint main() { _Exit(0); }" TASKKIT_MINGW_HAS_UCRT)
+    unset(CMAKE_REQUIRED_LINK_OPTIONS)
+    if(TASKKIT_MINGW_HAS_UCRT)
+        add_compile_options(-mcrtdll=ucrt)
+        add_link_options(-mcrtdll=ucrt)
+    endif()
+endif()
+
 # Add subdirectories
 add_subdirectory(include)
 

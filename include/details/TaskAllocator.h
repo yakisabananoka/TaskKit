@@ -6,6 +6,8 @@
 
 namespace TKit
 {
+	// Type-erased allocator handle used for coroutine frames. Copyable; the
+	// pointed-to context must outlive every frame allocated through it.
 	class TaskAllocator
 	{
 	public:
@@ -53,6 +55,12 @@ namespace TKit
 		void* GetContext() const noexcept
 		{
 			return context_;
+		}
+
+		[[nodiscard]]
+		DeallocateFunc GetDeallocateFunc() const noexcept
+		{
+			return deallocate_;
 		}
 
 	private:

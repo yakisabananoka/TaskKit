@@ -468,6 +468,7 @@ TaskSystem設定のビルダーです。
 - `WithCustomAllocator(allocator)` - カスタムメモリアロケータを設定します
 - `WithThreadPoolSize(size)` - ワーカースレッド数を設定します（0 = hardware_concurrency）
 - `WithReservedTaskCount(count)` - スケジューラごとの予約タスクスロット数を設定します
+- `WithWorkerFrameInterval(interval)` - フレーム待機中のコルーチンが載っているワーカーが更新間隔として待つ時間を設定します(デフォルト: 1ms)
 - `Build()` - 設定オブジェクトを作成します
 
 ### ユーティリティ関数
@@ -565,7 +566,7 @@ co_await (condition ? ActualTask() : GetCompletedTask());
 MyBackgroundTask().Forget();
 ```
 
-> **重要**: `.Forget()`を使わない場合、タスクは変数に保存するか、awaitする必要があります。そうしないと、タスクが想定より早く破棄されてしまいます。
+> **注意**: 未完了の`Task`を破棄するとタスクはデタッチされます。コルーチンはスケジューラ上で実行を継続し、完了時に自身のフレームを解放します。`.Forget()`はその意図を明示的に表現するためのものです(`[[nodiscard]]`警告も抑制されます)。
 
 #### `.IsDone()`
 
@@ -582,7 +583,7 @@ if (task.IsDone()) { /* ... */ }
 
 ```cpp
 if (task.IsReady()) {
-    auto result = co_await task;
+    auto result = co_await std::move(task);
 }
 ```
 

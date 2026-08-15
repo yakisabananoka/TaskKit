@@ -2,153 +2,107 @@
 #define TASKKIT_TASK_SCHEDULER_H
 
 #include <atomic>
+#include <cassert>
 #include <coroutine>
-#include <vector>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 namespace TKit
 {
+	// A frame-based coroutine queue owned by a single thread.
+	//
+	// - Schedule() may be called from any thread. The owner thread appends to a
+	//   plain vector; other threads go through a mutex-guarded inbox.
+	// - Update() may only be called on the owner thread. It resumes everything
+	//   scheduled before the call; handles scheduled during Update() (e.g. by a
+	//   coroutine yielding again) run on the next Update().
+	// - The pending count is a dedicated atomic so any thread can poll it in O(1).
 	class TaskScheduler final
 	{
-		struct RemoteNode
-		{
-			RemoteNode* next;
-			std::coroutine_handle<> handle;
-		};
-
 	public:
-		explicit TaskScheduler(std::size_t reservedTaskCount, std::thread::id ownerId = std::thread::id{}) :
-			ownerId_(ownerId == std::thread::id{} ? std::this_thread::get_id() : ownerId)
+		explicit TaskScheduler(std::size_t reservedTaskCount, std::thread::id ownerId = std::this_thread::get_id()) :
+			ownerId_(ownerId)
 		{
-			handles_.reserve(reservedTaskCount);
-			updateHandles_.reserve(reservedTaskCount);
+			local_.reserve(reservedTaskCount);
+			running_.reserve(reservedTaskCount);
 		}
 
 		~TaskScheduler()
 		{
-			for (const auto& handle : handles_)
+			for (const auto handle : local_)
 			{
 				handle.destroy();
 			}
-			for (const auto& handle : updateHandles_)
+			for (const auto handle : remote_)
 			{
 				handle.destroy();
 			}
+		}
 
-			RemoteNode* head = remoteHead_.load(std::memory_order_acquire);
-			while (head)
+		void Schedule(std::coroutine_handle<> handle)
+		{
+			// Increment before publishing the handle: it can only be resumed (and
+			// the count decremented) after it became visible, so the counter can
+			// never underflow.
+			pendingCount_.fetch_add(1, std::memory_order_release);
+
+			if (std::this_thread::get_id() == ownerId_)
 			{
-				RemoteNode* current = head;
-				head = head->next;
-				current->handle.destroy();
-				delete current;
+				local_.push_back(handle);
+			}
+			else
+			{
+				std::lock_guard lock(remoteMutex_);
+				remote_.push_back(handle);
 			}
 		}
 
 		void Update()
 		{
-			CollectRemote();
-			std::swap(updateHandles_, handles_);
+			assert(std::this_thread::get_id() == ownerId_ && "TaskScheduler::Update: called off the owner thread");
+			assert(running_.empty() && "TaskScheduler::Update: reentrant update is not supported");
 
-			for (const auto& handle : updateHandles_)
+			{
+				std::lock_guard lock(remoteMutex_);
+				local_.insert(local_.end(), remote_.begin(), remote_.end());
+				remote_.clear();
+			}
+
+			running_.swap(local_);
+
+			for (const auto handle : running_)
 			{
 				handle.resume();
+				pendingCount_.fetch_sub(1, std::memory_order_release);
 			}
-			updateHandles_.clear();
-		}
-
-		void Schedule(std::coroutine_handle<> handle)
-		{
-			if (std::this_thread::get_id() == ownerId_)
-			{
-				handles_.emplace_back(handle);
-			}
-			else
-			{
-				PushRemote(handle);
-			}
+			running_.clear();
 		}
 
 		[[nodiscard]]
-		std::size_t GetPendingTaskCount() const
+		std::size_t GetPendingTaskCount() const noexcept
 		{
-			std::size_t count = handles_.size();
+			return pendingCount_.load(std::memory_order_acquire);
+		}
 
-			RemoteNode* node = remoteHead_.load(std::memory_order_acquire);
-			while (node)
-			{
-				++count;
-				node = node->next;
-			}
-
-			return count;
+		[[nodiscard]]
+		std::thread::id GetOwnerThreadId() const noexcept
+		{
+			return ownerId_;
 		}
 
 		TaskScheduler(const TaskScheduler&) = delete;
 		TaskScheduler& operator=(const TaskScheduler&) = delete;
-
-		TaskScheduler(TaskScheduler&& other) noexcept :
-			ownerId_(other.ownerId_),
-			handles_(std::move(other.handles_)),
-			updateHandles_(std::move(other.updateHandles_)),
-			remoteHead_(other.remoteHead_.exchange(nullptr, std::memory_order_acquire))
-		{
-		}
-
-		TaskScheduler& operator=(TaskScheduler&& other) noexcept
-		{
-			if (this != &other)
-			{
-				ownerId_ = other.ownerId_;
-				handles_ = std::move(other.handles_);
-				updateHandles_ = std::move(other.updateHandles_);
-
-				RemoteNode* oldHead = remoteHead_.exchange(nullptr, std::memory_order_acquire);
-				while (oldHead)
-				{
-					RemoteNode* next = oldHead->next;
-					delete oldHead;
-					oldHead = next;
-				}
-				remoteHead_.store(
-					other.remoteHead_.exchange(nullptr, std::memory_order_acquire),
-					std::memory_order_release
-				);
-			}
-			return *this;
-		}
+		TaskScheduler(TaskScheduler&&) = delete;
+		TaskScheduler& operator=(TaskScheduler&&) = delete;
 
 	private:
-		void CollectRemote()
-		{
-			RemoteNode* head = remoteHead_.exchange(nullptr, std::memory_order_acquire);
-			while (head)
-			{
-				RemoteNode* current = head;
-				head = head->next;
-				handles_.emplace_back(current->handle);
-				delete current;
-			}
-		}
-
-		void PushRemote(std::coroutine_handle<> handle)
-		{
-			auto* node = new RemoteNode{nullptr, handle};
-
-			RemoteNode* oldHead = remoteHead_.load(std::memory_order_relaxed);
-			do
-			{
-				node->next = oldHead;
-			} while (!remoteHead_.compare_exchange_weak(
-				oldHead, node,
-				std::memory_order_release,
-				std::memory_order_relaxed));
-		}
-
 		std::thread::id ownerId_;
-		std::vector<std::coroutine_handle<>> handles_;
-		std::vector<std::coroutine_handle<>> updateHandles_;
-		std::atomic<RemoteNode*> remoteHead_{nullptr};
+		std::vector<std::coroutine_handle<>> local_;
+		std::vector<std::coroutine_handle<>> running_;
+		std::mutex remoteMutex_;
+		std::vector<std::coroutine_handle<>> remote_;
+		alignas(64) std::atomic<std::size_t> pendingCount_{0};
 	};
 }
 

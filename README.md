@@ -468,6 +468,7 @@ Builder for TaskSystem configuration.
 - `WithCustomAllocator(allocator)` - Set custom memory allocator
 - `WithThreadPoolSize(size)` - Set number of worker threads (0 = hardware_concurrency)
 - `WithReservedTaskCount(count)` - Set reserved task slots per scheduler
+- `WithWorkerFrameInterval(interval)` - Set how long a pool worker waits between updates while frame-waiting coroutines are parked on it (default: 1ms)
 - `Build()` - Create configuration object
 
 ### Utility Functions
@@ -565,7 +566,7 @@ Marks task for fire-and-forget execution with automatic cleanup.
 MyBackgroundTask().Forget();
 ```
 
-> **Important**: Without `.Forget()`, the task must be stored or awaited to prevent premature destruction.
+> **Note**: Destroying an unfinished `Task` detaches it: the coroutine keeps running on its scheduler and frees itself on completion. `.Forget()` expresses that intent explicitly (and silences the `[[nodiscard]]` warning).
 
 #### `.IsDone()`
 
@@ -582,7 +583,7 @@ Checks if task result is ready to retrieve.
 
 ```cpp
 if (task.IsReady()) {
-    auto result = co_await task;
+    auto result = co_await std::move(task);
 }
 ```
 

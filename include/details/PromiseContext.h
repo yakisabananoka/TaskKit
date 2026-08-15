@@ -1,6 +1,7 @@
 #ifndef TASKKIT_PROMISE_CONTEXT_H
 #define TASKKIT_PROMISE_CONTEXT_H
 
+#include <atomic>
 #include <cassert>
 
 namespace TKit
@@ -9,6 +10,10 @@ namespace TKit
 	class TaskSchedulerManager;
 	class ThreadPool;
 
+	// Ambient services (allocator / scheduler manager / thread pool) that task
+	// coroutines reach without threading them through every call. Set once by
+	// TaskSystem::Initialize and cleared by TaskSystem::Shutdown; read-only in
+	// between, so a single atomic pointer is all the synchronization needed.
 	class PromiseContext final
 	{
 	public:
@@ -19,16 +24,17 @@ namespace TKit
 		{
 		}
 
-		void static SetCurrent(PromiseContext* context) noexcept
+		static void SetCurrent(PromiseContext* context) noexcept
 		{
-			currentContext_ = context;
+			GetCurrentStorage().store(context, std::memory_order_release);
 		}
 
 		[[nodiscard]]
 		static const PromiseContext& GetCurrent() noexcept
 		{
-			assert(currentContext_ && "TaskContext::GetCurrent: No current PromiseContext set");
-			return *currentContext_;
+			const PromiseContext* context = GetCurrentStorage().load(std::memory_order_acquire);
+			assert(context && "PromiseContext::GetCurrent: no context set. Call TaskSystem::Initialize() first.");
+			return *context;
 		}
 
 		[[nodiscard]]
@@ -50,11 +56,15 @@ namespace TKit
 		}
 
 	private:
+		static std::atomic<PromiseContext*>& GetCurrentStorage() noexcept
+		{
+			static std::atomic<PromiseContext*> current{nullptr};
+			return current;
+		}
+
 		TaskAllocator* allocator_;
 		TaskSchedulerManager* schedulerManager_;
 		ThreadPool* threadPool_;
-
-		static inline PromiseContext* currentContext_ = nullptr;
 	};
 }
 

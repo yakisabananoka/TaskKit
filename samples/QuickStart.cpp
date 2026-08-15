@@ -1,4 +1,6 @@
-﻿#include "TaskKit.h"
+#include <cstdio>
+#include <thread>
+#include "TaskKit.h"
 
 using namespace TKit;
 using namespace std::literals::chrono_literals;
@@ -46,11 +48,11 @@ Task<> ExampleWhenAllTask()
 int main()
 {
     TaskSystem::Initialize();
-    const auto ids = TaskSystem::GetMainThreadSchedulerIds();
 
     {
-        const auto id = ids[0];
+        const auto id = TaskSystem::CreateScheduler();
         auto activation = TaskSystem::ActivateScheduler(id);
+
         // Run different examples (uncomment to try)
         //ExampleDelayFrameTask().Forget();
         //ExampleDelayForTask().Forget();

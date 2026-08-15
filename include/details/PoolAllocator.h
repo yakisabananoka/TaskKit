@@ -1,18 +1,26 @@
 #ifndef TASKKIT_POOL_ALLOCATOR_H
 #define TASKKIT_POOL_ALLOCATOR_H
 
-#include <cstddef>
 #include <array>
-#include <new>
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <mutex>
+#include <new>
 #include <thread>
 #include <unordered_map>
-#include <mutex>
-#include <ranges>
 #include "TaskAllocator.h"
 
 namespace TKit
 {
+	// Size-class slab allocator with per-thread pools.
+	//
+	// - Allocations are served from the calling thread's pool without locking
+	//   (the registry mutex is only hit on the first allocation per thread).
+	// - Frees on the owning thread push straight onto the local free list (LIFO,
+	//   so the block is immediately reusable).
+	// - Frees from other threads go onto the owner's lock-free remote list and
+	//   are collected by the owner the next time its local free list runs dry.
 	class PoolAllocator
 	{
 	public:
@@ -62,7 +70,9 @@ namespace TKit
 			std::uint64_t allocatorId;
 			std::thread::id ownerId;
 			std::array<PoolState, PoolSizes.size()> pools;
-			std::atomic<RemoteFreeNode*> remoteFreeHead{nullptr};
+
+			// On its own cache line: written by other threads, read by the owner.
+			alignas(64) std::atomic<RemoteFreeNode*> remoteFreeHead{nullptr};
 
 			ThreadLocalPool(PoolAllocator* p, std::uint64_t id, std::thread::id tid)
 				: parent(p), allocatorId(id), ownerId(tid)
@@ -71,9 +81,10 @@ namespace TKit
 
 			~ThreadLocalPool()
 			{
-				for (std::size_t i = 0; i < pools.size(); ++i)
+				// Remote-freed blocks live inside the slabs, so releasing the
+				// slabs releases them too.
+				for (auto& pool : pools)
 				{
-					auto& pool = pools[i];
 					Slab* slab = pool.slabs;
 					while (slab)
 					{
@@ -95,16 +106,9 @@ namespace TKit
 
 					const std::size_t poolIndex = current->poolIndex;
 
-					if (poolIndex < PoolSizes.size())
-					{
-						auto* freeNode = new (current) FreeNode{};
-						freeNode->next = pools[poolIndex].freeList;
-						pools[poolIndex].freeList = freeNode;
-					}
-					else
-					{
-						::operator delete(current);
-					}
+					auto* freeNode = new (current) FreeNode{};
+					freeNode->next = pools[poolIndex].freeList;
+					pools[poolIndex].freeList = freeNode;
 				}
 			}
 
@@ -195,7 +199,7 @@ namespace TKit
 		~PoolAllocator()
 		{
 			std::lock_guard lock(poolsMutex_);
-			for (const auto& pool: threadPools_ | std::views::values)
+			for (const auto& [threadId, pool] : threadPools_)
 			{
 				delete pool;
 			}
@@ -215,11 +219,11 @@ namespace TKit
 				meta->ownerPool = pool;
 				meta->poolIndex = static_cast<std::uint8_t>(poolIndex);
 
-				void* userPtr = static_cast<char*>(rawPtr) + AlignedMetaSize;
-
-				return userPtr;
+				return static_cast<char*>(rawPtr) + AlignedMetaSize;
 			}
 
+			// Oversized: plain heap allocation, still prefixed with meta so
+			// Deallocate can tell it apart.
 			const std::size_t allocSize = size + AlignedMetaSize;
 			void* rawPtr = ::operator new(allocSize);
 
@@ -227,9 +231,7 @@ namespace TKit
 			meta->ownerPool = pool;
 			meta->poolIndex = static_cast<std::uint8_t>(PoolSizes.size());
 
-			void* userPtr = static_cast<char*>(rawPtr) + AlignedMetaSize;
-
-			return userPtr;
+			return static_cast<char*>(rawPtr) + AlignedMetaSize;
 		}
 
 		void Deallocate(void* ptr, [[maybe_unused]] std::size_t size)
@@ -256,9 +258,7 @@ namespace TKit
 				return;
 			}
 
-			const std::thread::id currentThread = std::this_thread::get_id();
-
-			if (ownerPool->ownerId == currentThread)
+			if (ownerPool->ownerId == std::this_thread::get_id())
 			{
 				auto* node = new (rawPtr) FreeNode{};
 				node->next = ownerPool->pools[poolIndex].freeList;
@@ -304,7 +304,9 @@ namespace TKit
 
 		ThreadLocalPool* GetOrCreateThreadPool()
 		{
-			thread_local TlsCacheEntry cache = { nullptr, 0 };
+			// Cache keyed by allocator id: ids are never reused, so a stale entry
+			// from a destroyed allocator can never be mistaken for this one.
+			thread_local TlsCacheEntry cache = {nullptr, 0};
 			if (cache.pool && cache.allocatorId == id_)
 			{
 				return cache.pool;

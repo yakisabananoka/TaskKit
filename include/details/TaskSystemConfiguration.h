@@ -1,7 +1,9 @@
-﻿#ifndef TASKKIT_TASK_SYSTEM_CONFIGURATION_H
+#ifndef TASKKIT_TASK_SYSTEM_CONFIGURATION_H
 #define TASKKIT_TASK_SYSTEM_CONFIGURATION_H
 
-#include <thread>
+#include <chrono>
+#include <cstddef>
+#include <optional>
 #include "TaskAllocator.h"
 
 namespace TKit
@@ -13,6 +15,11 @@ namespace TKit
 		std::optional<TaskAllocator> allocator;
 		std::size_t threadPoolSize = 0;
 		std::size_t reservedTaskCount = 100;
+
+		// How long a pool worker waits between updates while frame-waiting
+		// coroutines (co_yield / WaitFor) are parked on it. Smaller values lower
+		// latency, larger values lower CPU usage.
+		std::chrono::nanoseconds workerFrameInterval = std::chrono::milliseconds(1);
 	};
 
 	class TaskSystemConfiguration::Builder
@@ -35,6 +42,12 @@ namespace TKit
 		Builder& WithReservedTaskCount(std::size_t count)
 		{
 			configuration_.reservedTaskCount = count;
+			return *this;
+		}
+
+		Builder& WithWorkerFrameInterval(std::chrono::nanoseconds interval)
+		{
+			configuration_.workerFrameInterval = interval;
 			return *this;
 		}
 

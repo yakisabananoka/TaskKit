@@ -1,36 +1,46 @@
-﻿#ifndef TASKKIT_TASKSCHEDULER_ID_H
+#ifndef TASKKIT_TASKSCHEDULER_ID_H
 #define TASKKIT_TASKSCHEDULER_ID_H
+
 #include <thread>
+#include "TaskScheduler.h"
 
 namespace TKit
 {
+	// Opaque handle to a TaskScheduler owned by a TaskSchedulerManager.
+	// Internally a direct pointer, so scheduling through an id costs no lookup.
+	// Valid until the owning manager is destroyed.
 	class TaskSchedulerId final
 	{
 	public:
 		TaskSchedulerId() noexcept = default;
-		TaskSchedulerId(std::thread::id threadId, std::size_t internalId) noexcept :
-			threadId_(threadId),
-			internalId_(internalId)
-		{
-		}
 
-		[[nodiscard]]
-		std::size_t GetInternalId() const noexcept
+		explicit TaskSchedulerId(TaskScheduler* scheduler) noexcept :
+			scheduler_(scheduler)
 		{
-			return internalId_;
 		}
 
 		[[nodiscard]]
 		std::thread::id GetThreadId() const noexcept
 		{
-			return threadId_;
+			return scheduler_ ? scheduler_->GetOwnerThreadId() : std::thread::id{};
 		}
 
-		auto operator<=>(const TaskSchedulerId& other) const noexcept = default;
+		[[nodiscard]]
+		TaskScheduler* GetScheduler() const noexcept
+		{
+			return scheduler_;
+		}
+
+		[[nodiscard]]
+		bool IsValid() const noexcept
+		{
+			return scheduler_ != nullptr;
+		}
+
+		auto operator<=>(const TaskSchedulerId&) const noexcept = default;
 
 	private:
-		std::thread::id threadId_;
-		std::size_t internalId_ = 0;
+		TaskScheduler* scheduler_ = nullptr;
 	};
 }
 

@@ -1,9 +1,13 @@
 #ifndef TASKKIT_THREAD_POOL_H
 #define TASKKIT_THREAD_POOL_H
 
-#include <cassert>
 #include <atomic>
+#include <cassert>
+#include <chrono>
 #include <condition_variable>
+#include <coroutine>
+#include <cstddef>
+#include <latch>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -14,6 +18,12 @@
 
 namespace TKit
 {
+	// A fixed set of worker threads, each driving its own TaskScheduler.
+	//
+	// Workers sleep on a condition variable while idle. When an update leaves
+	// frame-waiting coroutines behind (co_yield / WaitFor running on a worker),
+	// the worker paces itself with `frameInterval` between updates instead of
+	// spinning at 100% CPU.
 	class ThreadPool final
 	{
 		struct WorkerContext
@@ -27,104 +37,84 @@ namespace TKit
 		ThreadPool(
 			TaskSchedulerManager& schedulerManager,
 			std::size_t threadCount,
-			std::size_t reservedTaskCount = 100
+			std::size_t reservedTaskCount = 100,
+			std::chrono::nanoseconds frameInterval = std::chrono::milliseconds(1)
 		) :
 			schedulerManager_(&schedulerManager),
+			frameInterval_(frameInterval),
 			running_(true)
 		{
-			workers_.reserve(threadCount);
-			workerContexts_.reserve(threadCount);
+			assert(threadCount > 0 && "ThreadPool: threadCount must be at least 1");
 
+			workerContexts_.reserve(threadCount);
 			for (std::size_t i = 0; i < threadCount; ++i)
 			{
 				workerContexts_.push_back(std::make_unique<WorkerContext>());
 			}
 
-			std::atomic<std::size_t> waitingWorkers{0};
-			std::mutex initMutex;
-			std::condition_variable workerReadyCv;
-			std::condition_variable startCv;
-			bool ready = false;
+			// Each worker registers its own scheduler (CreateScheduler is
+			// thread-safe); the constructor only returns once every worker did,
+			// so GetSchedulerId()/Schedule() are usable immediately.
+			std::latch schedulersReady(static_cast<std::ptrdiff_t>(threadCount));
 
+			workers_.reserve(threadCount);
 			for (std::size_t i = 0; i < threadCount; ++i)
 			{
-				workers_.emplace_back([this, i, &waitingWorkers, &initMutex, &workerReadyCv, &startCv, &ready]()
+				workers_.emplace_back([this, i, reservedTaskCount, &schedulersReady]()
 				{
-					{
-						std::unique_lock lock(initMutex);
-						waitingWorkers.fetch_add(1, std::memory_order_release);
-						workerReadyCv.notify_one();
-						startCv.wait(lock, [&ready]() { return ready; });
-					}
-					waitingWorkers.fetch_add(1, std::memory_order_release);
-
-					WorkerMain(i);
+					auto& context = *workerContexts_[i];
+					context.schedulerId = schedulerManager_->CreateScheduler(std::this_thread::get_id(), reservedTaskCount);
+					schedulersReady.count_down();
+					WorkerMain(context);
 				});
 			}
 
-			{
-				std::unique_lock lock(initMutex);
-				workerReadyCv.wait(lock, [&waitingWorkers, threadCount]()
-				{
-					return waitingWorkers.load(std::memory_order_acquire) == threadCount;
-				});
-
-				for (std::size_t i = 0; i < threadCount; ++i)
-				{
-					auto workerId = workers_[i].get_id();
-					workerContexts_[i]->schedulerId = schedulerManager_->CreateScheduler(workerId, reservedTaskCount);
-				}
-
-				waitingWorkers.store(0, std::memory_order_release);
-				ready = true;
-			}
-			startCv.notify_all();
-
-			while (waitingWorkers.load(std::memory_order_acquire) < threadCount)
-			{
-				std::this_thread::yield();
-			}
+			schedulersReady.wait();
 		}
 
 		~ThreadPool()
 		{
 			running_.store(false, std::memory_order_release);
 
-			for (auto& context : workerContexts_)
+			for (const auto& context : workerContexts_)
 			{
-				std::lock_guard lock(context->mutex);
+				{
+					std::lock_guard lock(context->mutex);
+				}
 				context->cv.notify_one();
 			}
 
 			for (auto& worker : workers_)
 			{
-				if (worker.joinable())
-				{
-					worker.join();
-				}
+				worker.join();
 			}
 		}
 
 		void Schedule(std::coroutine_handle<> handle)
 		{
-			const std::size_t index = nextScheduler_.fetch_add(1, std::memory_order_relaxed) % workers_.size();
-			schedulerManager_->Schedule(workerContexts_[index]->schedulerId, handle);
-
-			std::lock_guard lock(workerContexts_[index]->mutex);
-			workerContexts_[index]->cv.notify_one();
+			const std::size_t index = nextWorker_.fetch_add(1, std::memory_order_relaxed) % workerContexts_.size();
+			Schedule(index, handle);
 		}
 
 		void Schedule(std::size_t workerIndex, std::coroutine_handle<> handle)
 		{
-			assert(workerIndex < workers_.size() && "ThreadPool: invalid worker index");
-			schedulerManager_->Schedule(workerContexts_[workerIndex]->schedulerId, handle);
+			assert(workerIndex < workerContexts_.size() && "ThreadPool: invalid worker index");
+			auto& context = *workerContexts_[workerIndex];
 
-			std::lock_guard lock(workerContexts_[workerIndex]->mutex);
-			workerContexts_[workerIndex]->cv.notify_one();
+			schedulerManager_->Schedule(context.schedulerId, handle);
+
+			// The empty critical section pairs with the predicate check the worker
+			// performs under the same mutex, so the wakeup cannot be lost;
+			// notifying after the unlock avoids waking the worker straight into a
+			// held mutex.
+			{
+				std::lock_guard lock(context.mutex);
+			}
+			context.cv.notify_one();
 		}
 
 		[[nodiscard]]
-		std::size_t GetWorkerCount() const
+		std::size_t GetWorkerCount() const noexcept
 		{
 			return workers_.size();
 		}
@@ -132,7 +122,7 @@ namespace TKit
 		[[nodiscard]]
 		TaskSchedulerId GetSchedulerId(std::size_t workerIndex) const
 		{
-			assert(workerIndex < workers_.size() && "ThreadPool: invalid worker index");
+			assert(workerIndex < workerContexts_.size() && "ThreadPool: invalid worker index");
 			return workerContexts_[workerIndex]->schedulerId;
 		}
 
@@ -142,38 +132,57 @@ namespace TKit
 		ThreadPool& operator=(ThreadPool&&) = delete;
 
 	private:
-		void WorkerMain(std::size_t workerIndex)
+		void WorkerMain(WorkerContext& context)
 		{
-			auto& context = *workerContexts_[workerIndex];
-			auto schedulerId = context.schedulerId;
+			TaskScheduler* scheduler = context.schedulerId.GetScheduler();
+
+			const auto hasWork = [this, scheduler]()
+			{
+				return !running_.load(std::memory_order_acquire) || scheduler->GetPendingTaskCount() > 0;
+			};
 
 			while (true)
 			{
 				{
 					std::unique_lock lock(context.mutex);
-					context.cv.wait(lock, [this, &schedulerId]()
+					// The timeout doubles as a safety net for handles that reach
+					// this scheduler without going through ThreadPool::Schedule
+					// (and therefore without a notify).
+					if (!context.cv.wait_for(lock, IdleRecheckInterval, hasWork))
 					{
-						return !running_.load(std::memory_order_acquire) ||
-						       schedulerManager_->GetPendingTaskCount(schedulerId) > 0;
-					});
+						continue;
+					}
 
-					if (!running_.load(std::memory_order_acquire) &&
-					    schedulerManager_->GetPendingTaskCount(schedulerId) == 0)
+					if (!running_.load(std::memory_order_acquire) && scheduler->GetPendingTaskCount() == 0)
 					{
 						break;
 					}
 				}
 
-				schedulerManager_->ActivateScheduler(schedulerId);
+				schedulerManager_->ActivateScheduler(context.schedulerId);
 				schedulerManager_->UpdateActivatedScheduler();
 				schedulerManager_->DeactivateScheduler();
+
+				// Anything still pending yielded to the "next frame" — pace the
+				// next update instead of spinning. Shutdown interrupts the wait.
+				if (scheduler->GetPendingTaskCount() > 0)
+				{
+					std::unique_lock lock(context.mutex);
+					context.cv.wait_for(lock, frameInterval_, [this]()
+					{
+						return !running_.load(std::memory_order_acquire);
+					});
+				}
 			}
 		}
 
+		static constexpr std::chrono::milliseconds IdleRecheckInterval{10};
+
 		TaskSchedulerManager* schedulerManager_;
+		std::chrono::nanoseconds frameInterval_;
 		std::vector<std::thread> workers_;
 		std::vector<std::unique_ptr<WorkerContext>> workerContexts_;
-		std::atomic<std::size_t> nextScheduler_{0};
+		std::atomic<std::size_t> nextWorker_{0};
 		std::atomic<bool> running_;
 	};
 }

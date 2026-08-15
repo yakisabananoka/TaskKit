@@ -1,6 +1,8 @@
-﻿#ifndef TASKKIT_EXCEPTIONS_H
+#ifndef TASKKIT_EXCEPTIONS_H
 #define TASKKIT_EXCEPTIONS_H
-#include <format>
+
+#include <exception>
+#include <string>
 #include <utility>
 
 namespace TKit
