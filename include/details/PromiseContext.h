@@ -1,9 +1,7 @@
 #ifndef TASKKIT_PROMISE_CONTEXT_H
 #define TASKKIT_PROMISE_CONTEXT_H
 
-#include <atomic>
 #include <cassert>
-#include <cstdlib>
 
 namespace TKit
 {
@@ -11,37 +9,26 @@ namespace TKit
 	class TaskSchedulerManager;
 	class ThreadPool;
 
-	// Ambient services (allocator / scheduler manager / thread pool) that task
-	// coroutines reach without threading them through every call. Set once by
-	// TaskSystem::Initialize and cleared by TaskSystem::Shutdown; read-only in
-	// between, so a single atomic pointer is all the synchronization needed.
+	// Per-TaskSystem services (allocator / scheduler manager / thread pool) that
+	// task coroutines reach without threading them through every call. Owned by
+	// its TaskSystem and stamped into every TaskScheduler that system creates;
+	// code running under an activated scheduler resolves it through
+	// TaskSchedulerManager::RequireCurrentPromiseContext().
 	class PromiseContext final
 	{
 	public:
-		PromiseContext(TaskAllocator& allocator, TaskSchedulerManager& schedulerManager, ThreadPool& threadPool) noexcept :
+		PromiseContext(TaskAllocator& allocator, TaskSchedulerManager& schedulerManager) noexcept :
 			allocator_(&allocator),
-			schedulerManager_(&schedulerManager),
-			threadPool_(&threadPool)
+			schedulerManager_(&schedulerManager)
 		{
 		}
 
-		static void SetCurrent(PromiseContext* context) noexcept
+		// The thread pool is constructed after this context (its workers need
+		// the context already wired into the scheduler manager when they
+		// register their schedulers), so TaskSystem sets it afterwards.
+		void SetThreadPool(ThreadPool& threadPool) noexcept
 		{
-			GetCurrentStorage().store(context, std::memory_order_release);
-		}
-
-		[[nodiscard]]
-		static const PromiseContext& GetCurrent() noexcept
-		{
-			const PromiseContext* context = GetCurrentStorage().load(std::memory_order_acquire);
-			assert(context && "PromiseContext::GetCurrent: no context set. Call TaskSystem::Initialize() first.");
-			if (context == nullptr)
-			{
-				// Creating tasks before Initialize / after Shutdown would
-				// otherwise dereference null inside the frame allocator.
-				std::abort();
-			}
-			return *context;
+			threadPool_ = &threadPool;
 		}
 
 		[[nodiscard]]
@@ -59,19 +46,14 @@ namespace TKit
 		[[nodiscard]]
 		ThreadPool& GetThreadPool() const noexcept
 		{
+			assert(threadPool_ && "PromiseContext::GetThreadPool: thread pool not wired yet");
 			return *threadPool_;
 		}
 
 	private:
-		static std::atomic<PromiseContext*>& GetCurrentStorage() noexcept
-		{
-			static std::atomic<PromiseContext*> current{nullptr};
-			return current;
-		}
-
 		TaskAllocator* allocator_;
 		TaskSchedulerManager* schedulerManager_;
-		ThreadPool* threadPool_;
+		ThreadPool* threadPool_ = nullptr;
 	};
 }
 

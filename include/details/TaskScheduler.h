@@ -12,6 +12,8 @@
 
 namespace TKit
 {
+	class PromiseContext;
+
 	// Default number of task slots each scheduler pre-reserves in its queues.
 	inline constexpr std::size_t DefaultReservedTaskCount = 100;
 
@@ -43,8 +45,13 @@ namespace TKit
 		};
 
 	public:
-		explicit TaskScheduler(std::size_t reservedTaskCount, std::thread::id ownerId = std::this_thread::get_id()) :
-			ownerId_(ownerId)
+		explicit TaskScheduler(
+			std::size_t reservedTaskCount,
+			std::thread::id ownerId = std::this_thread::get_id(),
+			const PromiseContext* promiseContext = nullptr
+		) :
+			ownerId_(ownerId),
+			promiseContext_(promiseContext)
 		{
 			local_.reserve(reservedTaskCount);
 			running_.reserve(reservedTaskCount);
@@ -185,6 +192,15 @@ namespace TKit
 			return ownerId_;
 		}
 
+		// The PromiseContext of the TaskSystem this scheduler belongs to, or
+		// nullptr for schedulers created without one (frame allocation is then
+		// impossible under this scheduler's activation).
+		[[nodiscard]]
+		const PromiseContext* GetPromiseContext() const noexcept
+		{
+			return promiseContext_;
+		}
+
 		TaskScheduler(const TaskScheduler&) = delete;
 		TaskScheduler& operator=(const TaskScheduler&) = delete;
 		TaskScheduler(TaskScheduler&&) = delete;
@@ -245,6 +261,7 @@ namespace TKit
 		}
 
 		std::thread::id ownerId_;
+		const PromiseContext* promiseContext_;
 		std::vector<std::coroutine_handle<>> local_;
 		std::vector<std::coroutine_handle<>> running_;
 		std::vector<FrameWait> frameWaits_;

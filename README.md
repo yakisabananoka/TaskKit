@@ -103,12 +103,13 @@ Task<> ExampleTask()
 
 int main()
 {
-    // Initialize TaskSystem (creates thread pool automatically)
-    TaskSystem::Initialize();
+    // Create the task runtime (creates thread pool automatically);
+    // its destructor tears everything down
+    TaskSystem taskSystem;
 
     {
         // Create and activate a scheduler
-        auto id = TaskSystem::CreateScheduler();
+        auto id = taskSystem.CreateScheduler();
         auto activation = TaskSystem::ActivateScheduler(id);
 
         // Start the task (fire-and-forget)
@@ -122,8 +123,6 @@ int main()
         }
     }
 
-    // Cleanup
-    TaskSystem::Shutdown();
     return 0;
 }
 ```
@@ -145,22 +144,24 @@ Tasks in TaskKit follow a simple lifecycle:
 
 ### TaskSystem and Schedulers
 
-**TaskSystem** manages schedulers and a built-in thread pool. It must be initialized before use.
+A **TaskSystem** instance owns its schedulers, a built-in thread pool and the frame allocator. Construct one before creating any Task; its destructor shuts everything down. Instances are independent, so several can coexist (e.g. one per test).
 
 **Key features:**
-- Call `TaskSystem::Initialize()` once at application startup
+- Construct a `TaskSystem` at application startup; RAII handles the cleanup
 - Schedulers are identified by unique IDs containing thread ID
-- `SchedulerActivation` RAII guard manages current scheduler context
+- `SchedulerActivation` RAII guard manages the current scheduler context
 - Built-in thread pool for offloading heavy computations
+
+Tasks bind to the system whose scheduler is active on the creating thread, so **activate a scheduler before creating tasks**.
 
 **Typical pattern:**
 
 ```cpp
-// Initialize TaskSystem (creates thread pool)
-TaskSystem::Initialize();
+// Create the task runtime (creates thread pool)
+TaskSystem taskSystem;
 
 // Create scheduler for main thread
-auto id = TaskSystem::CreateScheduler();
+auto id = taskSystem.CreateScheduler();
 
 // Activate as current (RAII guard)
 {
@@ -177,8 +178,7 @@ auto id = TaskSystem::CreateScheduler();
 
 } // Automatically deactivated
 
-// Cleanup
-TaskSystem::Shutdown();
+// taskSystem's destructor cleans everything up
 ```
 
 ---
@@ -338,14 +338,14 @@ TaskAllocator myAllocator{
     }
 };
 
-// Initialize TaskSystem with custom configuration
+// Create a TaskSystem with custom configuration
 auto config = TaskSystemConfiguration::Builder()
     .WithCustomAllocator(myAllocator)
     .WithThreadPoolSize(4)        // Number of worker threads
     .WithReservedTaskCount(200)   // Reserved task slots per scheduler
     .Build();
 
-TaskSystem::Initialize(config);
+TaskSystem taskSystem{config};
 ```
 
 > **Note**: By default, TaskKit uses an efficient pool allocator that reduces heap allocation overhead. Thread pool size defaults to `std::thread::hardware_concurrency()`.
@@ -451,17 +451,16 @@ The main coroutine type representing an asynchronous operation.
 
 #### `TaskSystem`
 
-Static class managing schedulers and thread pool.
+A task runtime instance owning schedulers, thread pool and frame allocator. Multiple instances may coexist.
 
-- `Initialize(config)` - Initialize TaskSystem with optional configuration
-- `Shutdown()` - Stops the thread pool promptly (pool tasks still queued or waiting are destroyed, not completed) and tears everything down. Drain your schedulers first if completion matters, and make sure no `Task` object for an unfinished task outlives this call.
-- `IsInitialized()` - Check if TaskSystem is initialized
-- `CreateScheduler(threadId, reservedCount)` - Create new scheduler, returns ID
-- `ActivateScheduler(id)` - Returns RAII guard that activates scheduler
-- `UpdateActivatedScheduler()` - Process pending tasks on activated scheduler
-- `GetPendingTaskCount(id)` - Get number of pending tasks
-- `GetActivatedSchedulerId()` - Get currently activated scheduler ID
-- `Schedule(id, handle)` - Schedule coroutine handle to specific scheduler
+- `TaskSystem(config)` - Constructor; takes an optional configuration
+- Destructor - Stops the thread pool promptly (pool tasks still queued or waiting are destroyed, not completed) and tears everything down. Must run on the constructing thread. Drain your schedulers first if completion matters, and make sure no `Task` object for an unfinished task outlives the instance.
+- `CreateScheduler(threadId, reservedCount)` - Create new scheduler on this instance, returns ID
+- `ActivateScheduler(id)` *(static)* - Returns RAII guard that activates scheduler
+- `UpdateActivatedScheduler()` *(static)* - Process pending tasks on activated scheduler
+- `GetPendingTaskCount(id)` *(static)* - Get number of pending tasks
+- `GetActivatedSchedulerId()` *(static)* - Get currently activated scheduler ID
+- `Schedule(id, handle)` *(static)* - Schedule coroutine handle to specific scheduler
 
 #### `TaskSystemConfiguration::Builder`
 

@@ -103,12 +103,13 @@ Task<> ExampleTask()
 
 int main()
 {
-    // TaskSystemを初期化（スレッドプールも自動的に作成）
-    TaskSystem::Initialize();
+    // タスクランタイムを作成（スレッドプールも自動的に作成）
+    // デストラクタが全体を破棄します
+    TaskSystem taskSystem;
 
     {
         // スケジューラを作成してアクティブ化
-        auto id = TaskSystem::CreateScheduler();
+        auto id = taskSystem.CreateScheduler();
         auto activation = TaskSystem::ActivateScheduler(id);
 
         // タスクを開始（ファイア・アンド・フォーゲット）
@@ -122,8 +123,6 @@ int main()
         }
     }
 
-    // クリーンアップ
-    TaskSystem::Shutdown();
     return 0;
 }
 ```
@@ -145,22 +144,24 @@ TaskKitのタスクは、シンプルなライフサイクルに従います：
 
 ### TaskSystemとScheduler
 
-**TaskSystem**は、スケジューラと組み込みスレッドプールを管理します。使用前に初期化が必要です。
+**TaskSystem**のインスタンスは、自身のスケジューラ・組み込みスレッドプール・フレームアロケータを所有します。Taskを作成する前にインスタンスを構築してください。デストラクタが全体を破棄します。インスタンスは互いに独立しているため、複数を共存させられます（テストごとに1つなど）。
 
 **主な特徴:**
-- アプリケーション起動時に`TaskSystem::Initialize()`を一度呼び出します
+- アプリケーション起動時に`TaskSystem`インスタンスを構築します。クリーンアップはRAIIで行われます
 - スケジューラはスレッドIDを含む一意のIDで識別されます
 - `SchedulerActivation` RAIIガードが現在のスケジューラコンテキストを管理します
 - 重い計算をオフロードするための組み込みスレッドプール
 
+タスクは「作成時にそのスレッドでアクティブなスケジューラ」が属するTaskSystemに結び付きます。**タスクを作成する前にスケジューラをアクティブ化してください**。
+
 **典型的なパターン:**
 
 ```cpp
-// TaskSystemを初期化（スレッドプールも作成）
-TaskSystem::Initialize();
+// タスクランタイムを作成（スレッドプールも作成）
+TaskSystem taskSystem;
 
 // メインスレッド用のスケジューラを作成
-auto id = TaskSystem::CreateScheduler();
+auto id = taskSystem.CreateScheduler();
 
 // 現在のスケジューラとしてアクティブ化（RAIIガード）
 {
@@ -177,8 +178,7 @@ auto id = TaskSystem::CreateScheduler();
 
 } // 自動的に非アクティブ化されます
 
-// クリーンアップ
-TaskSystem::Shutdown();
+// taskSystemのデストラクタが全体をクリーンアップします
 ```
 
 ---
@@ -338,14 +338,14 @@ TaskAllocator myAllocator{
     }
 };
 
-// カスタム設定でTaskSystemを初期化
+// カスタム設定でTaskSystemを作成
 auto config = TaskSystemConfiguration::Builder()
     .WithCustomAllocator(myAllocator)
     .WithThreadPoolSize(4)        // ワーカースレッド数
     .WithReservedTaskCount(200)   // スケジューラごとの予約タスク数
     .Build();
 
-TaskSystem::Initialize(config);
+TaskSystem taskSystem{config};
 ```
 
 > **注意**: デフォルトでは、TaskKitはヒープ確保のオーバーヘッドを削減する効率的なプールアロケータを使用します。スレッドプールサイズのデフォルトは`std::thread::hardware_concurrency()`です。
@@ -451,17 +451,16 @@ Task<> ProcessEvent()
 
 #### `TaskSystem`
 
-スケジューラとスレッドプールを管理する静的クラスです。
+スケジューラ・スレッドプール・フレームアロケータを所有するタスクランタイムのインスタンスです。複数のインスタンスを共存させられます。
 
-- `Initialize(config)` - オプションの設定でTaskSystemを初期化します
-- `Shutdown()` - スレッドプールを即時停止し(キュー・待機中のプールタスクは完了されず破棄されます)、全体を破棄します。完了が必要な場合は事前にスケジューラをドレインしてください。また、未完了タスクの`Task`オブジェクトをこの呼び出し以降まで保持しないでください。
-- `IsInitialized()` - TaskSystemが初期化されているかチェックします
-- `CreateScheduler(threadId, reservedCount)` - 新しいスケジューラを作成し、IDを返します
-- `ActivateScheduler(id)` - スケジューラをアクティブ化するRAIIガードを返します
-- `UpdateActivatedScheduler()` - アクティブなスケジューラの保留中のタスクを処理します
-- `GetPendingTaskCount(id)` - 保留中のタスク数を取得します
-- `GetActivatedSchedulerId()` - 現在アクティブなスケジューラIDを取得します
-- `Schedule(id, handle)` - コルーチンハンドルを特定のスケジューラにスケジュールします
+- `TaskSystem(config)` - コンストラクタ。オプションの設定を受け取ります
+- デストラクタ - スレッドプールを即時停止し(キュー・待機中のプールタスクは完了されず破棄されます)、全体を破棄します。構築したスレッドで実行する必要があります。完了が必要な場合は事前にスケジューラをドレインしてください。また、未完了タスクの`Task`オブジェクトをインスタンスより長く保持しないでください。
+- `CreateScheduler(threadId, reservedCount)` - このインスタンスに新しいスケジューラを作成し、IDを返します
+- `ActivateScheduler(id)` *(static)* - スケジューラをアクティブ化するRAIIガードを返します
+- `UpdateActivatedScheduler()` *(static)* - アクティブなスケジューラの保留中のタスクを処理します
+- `GetPendingTaskCount(id)` *(static)* - 保留中のタスク数を取得します
+- `GetActivatedSchedulerId()` *(static)* - 現在アクティブなスケジューラIDを取得します
+- `Schedule(id, handle)` *(static)* - コルーチンハンドルを特定のスケジューラにスケジュールします
 
 #### `TaskSystemConfiguration::Builder`
 

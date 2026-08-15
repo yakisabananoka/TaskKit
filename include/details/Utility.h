@@ -85,7 +85,7 @@ namespace TKit
 
 		void await_suspend(std::coroutine_handle<> handle) const
 		{
-			PromiseContext::GetCurrent().GetThreadPool().Schedule(handle);
+			TaskSchedulerManager::RequireCurrentPromiseContext().GetThreadPool().Schedule(handle);
 		}
 
 		void await_resume() const noexcept
@@ -483,7 +483,7 @@ namespace TKit
 			{
 				static_assert(alignof(WhenAnyState) <= alignof(std::max_align_t));
 
-				const TaskAllocator& allocator = PromiseContext::GetCurrent().GetAllocator();
+				const TaskAllocator& allocator = TaskSchedulerManager::RequireCurrentPromiseContext().GetAllocator();
 				void* memory = allocator.Allocate(sizeof(WhenAnyState));
 				auto* state = new (memory) WhenAnyState();
 				state->deallocate = allocator.GetDeallocateFunc();

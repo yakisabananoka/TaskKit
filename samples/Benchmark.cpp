@@ -144,12 +144,12 @@ int main()
 		}
 	};
 
-	TKit::TaskSystem::Initialize(TKit::TaskSystemConfiguration::Builder()
+	TKit::TaskSystem taskSystem{TKit::TaskSystemConfiguration::Builder()
 		.WithCustomAllocator(countingAllocator)
 		.WithThreadPoolSize(2)
-		.Build());
+		.Build()};
 
-	const auto id = TKit::TaskSystem::CreateScheduler(std::nullopt, 30000);
+	const auto id = taskSystem.CreateScheduler(std::nullopt, 30000);
 	{
 		auto activation = TKit::TaskSystem::ActivateScheduler(id);
 
@@ -196,6 +196,6 @@ int main()
 		Report("S5 WhenAny churn", 50'000, before, Take());
 	}
 
-	TKit::TaskSystem::Shutdown();
+	// The TaskSystem destructor shuts everything down.
 	return 0;
 }

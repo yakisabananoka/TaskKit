@@ -47,10 +47,10 @@ Task<> ExampleWhenAllTask()
 
 int main()
 {
-    TaskSystem::Initialize();
+    TaskSystem taskSystem;
 
     {
-        const auto id = TaskSystem::CreateScheduler();
+        const auto id = taskSystem.CreateScheduler();
         auto activation = TaskSystem::ActivateScheduler(id);
 
         // Run different examples (uncomment to try)
@@ -70,6 +70,6 @@ int main()
         std::printf("All tasks completed.\n");
     }
 
-    TaskSystem::Shutdown();
+    // The TaskSystem destructor shuts everything down.
     return 0;
 }

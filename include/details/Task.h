@@ -19,8 +19,8 @@ namespace TKit
 	namespace Details
 	{
 		// Every coroutine frame is prefixed with this header so the frame knows
-		// how to free itself even after the ambient PromiseContext changed or was
-		// cleared (e.g. frames destroyed during TaskSystem::Shutdown).
+		// how to free itself even after its PromiseContext is gone (e.g. frames
+		// destroyed while the owning TaskSystem is being torn down).
 		struct FrameHeader
 		{
 			TaskAllocator::DeallocateFunc deallocate;
@@ -35,7 +35,7 @@ namespace TKit
 		[[nodiscard]]
 		inline void* AllocateFrame(std::size_t size)
 		{
-			const TaskAllocator& allocator = PromiseContext::GetCurrent().GetAllocator();
+			const TaskAllocator& allocator = TaskSchedulerManager::RequireCurrentPromiseContext().GetAllocator();
 			void* raw = allocator.Allocate(size + FrameHeaderSize);
 			new (raw) FrameHeader{allocator.GetDeallocateFunc(), allocator.GetContext()};
 			return static_cast<char*>(raw) + FrameHeaderSize;

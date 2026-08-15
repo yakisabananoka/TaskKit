@@ -45,9 +45,9 @@ namespace TKit::Tests
 			.WithCustomAllocator(customAllocator)
 			.Build();
 
-		TaskSystem::Initialize(config);
+		TaskSystem taskSystem{config};
 
-		const auto schedulerId = TaskSystem::CreateScheduler();
+		const auto schedulerId = taskSystem.CreateScheduler();
 		{
 			auto registration = TaskSystem::ActivateScheduler(schedulerId);
 
@@ -81,7 +81,6 @@ namespace TKit::Tests
 		}
 
 		CheckPendingTasksAreZero(schedulerId);
-		TaskSystem::Shutdown();
 	}
 
 	TEST_F(AllocatorTests, DifferentSizedTasks)
@@ -119,9 +118,9 @@ namespace TKit::Tests
 			.WithCustomAllocator(sizeTrackingAllocator)
 			.Build();
 
-		TaskSystem::Initialize(config);
+		TaskSystem taskSystem{config};
 
-		const auto schedulerId = TaskSystem::CreateScheduler();
+		const auto schedulerId = taskSystem.CreateScheduler();
 		{
 			auto registration = TaskSystem::ActivateScheduler(schedulerId);
 
@@ -152,7 +151,6 @@ namespace TKit::Tests
 		}
 
 		CheckPendingTasksAreZero(schedulerId);
-		TaskSystem::Shutdown();
 	}
 
 	TEST_F(AllocatorTests, PoolAllocatorReuse)
@@ -201,9 +199,9 @@ namespace TKit::Tests
 			.WithCustomAllocator(poolAllocator)
 			.Build();
 
-		TaskSystem::Initialize(config);
+		TaskSystem taskSystem{config};
 
-		const auto schedulerId = TaskSystem::CreateScheduler();
+		const auto schedulerId = taskSystem.CreateScheduler();
 		{
 			auto registration = TaskSystem::ActivateScheduler(schedulerId);
 
@@ -229,7 +227,6 @@ namespace TKit::Tests
 		}
 
 		CheckPendingTasksAreZero(schedulerId);
-		TaskSystem::Shutdown();
 	}
 
 	TEST_F(AllocatorTests, NestedTaskAllocations)
@@ -253,9 +250,9 @@ namespace TKit::Tests
 			.WithCustomAllocator(trackingAllocator)
 			.Build();
 
-		TaskSystem::Initialize(config);
+		TaskSystem taskSystem{config};
 
-		const auto schedulerId = TaskSystem::CreateScheduler();
+		const auto schedulerId = taskSystem.CreateScheduler();
 		{
 			auto registration = TaskSystem::ActivateScheduler(schedulerId);
 
@@ -280,7 +277,5 @@ namespace TKit::Tests
 			EXPECT_GT(allocCount, initialAllocCount + 1)
 				<< "Should allocate for nested tasks";
 		}
-
-		TaskSystem::Shutdown();
 	}
 }

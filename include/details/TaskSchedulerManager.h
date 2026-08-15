@@ -13,9 +13,12 @@
 
 namespace TKit
 {
-	// Owns all TaskSchedulers. Creation is mutex-guarded and may happen from any
-	// thread; schedulers get stable addresses so a TaskSchedulerId can point at
-	// them directly and the hot scheduling paths need no lookups or locks.
+	class PromiseContext;
+
+	// Owns all TaskSchedulers of one TaskSystem. Creation is mutex-guarded and
+	// may happen from any thread; schedulers get stable addresses so a
+	// TaskSchedulerId can point at them directly and the hot scheduling paths
+	// need no lookups or locks.
 	//
 	// The activation stack is a per-thread notion, kept in thread-local storage:
 	// activating a scheduler never touches shared state.
@@ -25,12 +28,20 @@ namespace TKit
 		TaskSchedulerManager() = default;
 		~TaskSchedulerManager() = default;
 
+		// Wired by TaskSystem before any scheduler exists; every scheduler
+		// created afterwards carries this pointer, which is how coroutines
+		// running under an activation find their system's services.
+		void SetPromiseContext(const PromiseContext* context)
+		{
+			std::lock_guard lock(mutex_);
+			promiseContext_ = context;
+		}
+
 		TaskSchedulerId CreateScheduler(std::thread::id threadId, std::size_t reservedTaskCount)
 		{
-			auto scheduler = std::make_unique<TaskScheduler>(reservedTaskCount, threadId);
-			const TaskSchedulerId id{scheduler.get()};
-
 			std::lock_guard lock(mutex_);
+			auto scheduler = std::make_unique<TaskScheduler>(reservedTaskCount, threadId, promiseContext_);
+			const TaskSchedulerId id{scheduler.get()};
 			schedulers_.push_back(std::move(scheduler));
 			return id;
 		}
@@ -38,7 +49,7 @@ namespace TKit
 		// Precondition violations below guard memory safety, so they abort in
 		// release builds too instead of compiling down to undefined behavior.
 
-		void Schedule(const TaskSchedulerId& id, std::coroutine_handle<> handle)
+		static void Schedule(const TaskSchedulerId& id, std::coroutine_handle<> handle)
 		{
 			TaskScheduler* scheduler = id.GetScheduler();
 			assert(scheduler && "TaskSchedulerManager::Schedule: invalid scheduler id");
@@ -51,7 +62,7 @@ namespace TKit
 
 		// The activation stack is thread-local, so activation management is
 		// static: it works even while no manager instance is alive (e.g. an
-		// activation guard destroyed after TaskSystem::Shutdown).
+		// activation guard destroyed after its TaskSystem).
 		static void ActivateScheduler(const TaskSchedulerId& id)
 		{
 			TaskScheduler* scheduler = id.GetScheduler();
@@ -100,7 +111,7 @@ namespace TKit
 		}
 
 		[[nodiscard]]
-		std::size_t GetPendingTaskCount(const TaskSchedulerId& id) const
+		static std::size_t GetPendingTaskCount(const TaskSchedulerId& id)
 		{
 			TaskScheduler* scheduler = id.GetScheduler();
 			assert(scheduler && "TaskSchedulerManager::GetPendingTaskCount: invalid scheduler id");
@@ -126,12 +137,28 @@ namespace TKit
 		static TaskScheduler& RequireActiveScheduler() noexcept
 		{
 			TaskScheduler* scheduler = CurrentActiveScheduler();
-			assert(scheduler && "TaskSchedulerManager: no scheduler is active on this thread");
+			assert(scheduler && "TaskSchedulerManager: no scheduler is active on this thread (activate one before creating or resuming tasks)");
 			if (scheduler == nullptr)
 			{
 				std::abort();
 			}
 			return *scheduler;
+		}
+
+		// The PromiseContext of the scheduler active on this thread. Frame
+		// allocation and thread-pool switches resolve their services here;
+		// aborts (memory safety) when no scheduler is active or the scheduler
+		// was created without a context.
+		[[nodiscard]]
+		static const PromiseContext& RequireCurrentPromiseContext() noexcept
+		{
+			const PromiseContext* context = RequireActiveScheduler().GetPromiseContext();
+			assert(context && "TaskSchedulerManager: the active scheduler has no PromiseContext (create schedulers through TaskSystem)");
+			if (context == nullptr)
+			{
+				std::abort();
+			}
+			return *context;
 		}
 
 		TaskSchedulerManager(const TaskSchedulerManager&) = delete;
@@ -147,6 +174,7 @@ namespace TKit
 		}
 
 		mutable std::mutex mutex_;
+		const PromiseContext* promiseContext_ = nullptr;
 		std::vector<std::unique_ptr<TaskScheduler>> schedulers_;
 	};
 }

@@ -276,12 +276,13 @@ namespace TKit::Tests
 
 	TEST(TaskSystemLifecycleTests, ActivationGuardMayOutliveShutdown)
 	{
-		TaskSystem::Initialize();
+		std::optional<TaskSystem> taskSystem;
+		taskSystem.emplace();
 		{
-			const auto id = TaskSystem::CreateScheduler();
+			const auto id = taskSystem->CreateScheduler();
 			auto activation = TaskSystem::ActivateScheduler(id);
-			TaskSystem::Shutdown();
-		} // The guard is destroyed after Shutdown — must release cleanly.
+			taskSystem.reset();
+		} // The guard is destroyed after the TaskSystem — must release cleanly.
 		SUCCEED();
 	}
 

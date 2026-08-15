@@ -1,6 +1,7 @@
 ﻿#ifndef TASKKIT_TEST_BASE_H
 #define TASKKIT_TEST_BASE_H
 #include <gtest/gtest.h>
+#include <optional>
 #include "TaskKit.h"
 
 namespace TKit::Tests
@@ -14,8 +15,8 @@ namespace TKit::Tests
 
 		void SetUp() override
 		{
-			TaskSystem::Initialize();
-			schedulerId_ = TaskSystem::CreateScheduler();
+			taskSystem_.emplace();
+			schedulerId_ = taskSystem_->CreateScheduler();
 			registration_ = TaskSystem::ActivateScheduler(schedulerId_);
 		}
 
@@ -27,7 +28,7 @@ namespace TKit::Tests
 				<< "Test left " << pendingCount << " pending tasks";
 
 			registration_ = TaskSystem::SchedulerActivation();
-			TaskSystem::Shutdown();
+			taskSystem_.reset();
 		}
 
 		void RunScheduler(int frames = 1) const
@@ -74,6 +75,7 @@ namespace TKit::Tests
 		}
 
 	private:
+		std::optional<TaskSystem> taskSystem_;
 		TaskSchedulerId schedulerId_;
 		TaskSystem::SchedulerActivation registration_;
 	};
