@@ -22,7 +22,9 @@ endif()
 
 # Compiler warning settings
 if(MSVC)
-    add_compile_options(/W4)
+    # /utf-8: sources are UTF-8 without BOM (avoids C4819 on non-ASCII comments)
+    # /wd4324: padding added for alignas is intentional (cache-line separation)
+    add_compile_options(/W4 /utf-8 /wd4324)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()

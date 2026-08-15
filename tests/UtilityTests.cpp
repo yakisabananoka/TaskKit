@@ -596,7 +596,15 @@ namespace TKit::Tests
 
 		auto anyTask = [&]() -> Task<>
 		{
-			result = co_await WhenAny(task1(), task2(), task3());
+			// Create the tasks in a fixed order first: function-argument
+			// evaluation order is unspecified (MSVC evaluates right-to-left),
+			// and this test relies on task1 being scheduled — and therefore
+			// finishing — first.
+			auto first = task1();
+			auto second = task2();
+			auto third = task3();
+
+			result = co_await WhenAny(std::move(first), std::move(second), std::move(third));
 			co_return;
 		};
 

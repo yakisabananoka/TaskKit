@@ -133,7 +133,9 @@ namespace TKit::Tests
 			auto largeTask = []() -> Task<>
 			{
 				int a = 1, b = 2, c = 3, d = 4, e = 5;
-				[[maybe_unused]] double x = 1.0, y = 2.0, z = 3.0;
+				[[maybe_unused]] double x = 1.0;
+				[[maybe_unused]] double y = 2.0;
+				[[maybe_unused]] double z = 3.0;
 				co_yield {};
 				[[maybe_unused]] int result = a + b + c + d + e;
 				co_return;
