@@ -499,6 +499,17 @@ auto target = std::chrono::steady_clock::now() + 5s;
 co_await WaitUntil(target);
 ```
 
+#### `DelayFrameTask(frames)` / `WaitForTask(duration)` / `WaitUntilTask(timepoint)`
+
+`Task<>` wrappers around the allocation-free wait awaiters, for when a wait has to live as a task — stored in a variable, put into a `std::vector<Task<>>` for `WhenAll`, raced in `WhenAny`, and so on.
+
+```cpp
+std::vector<Task<>> tasks;
+tasks.push_back(DelayFrameTask(3));
+tasks.push_back(WaitForTask(1s));
+co_await WhenAll(std::move(tasks));
+```
+
 #### `WhenAll(tasks...)`
 
 Waits for multiple tasks to complete, returns tuple of results.

@@ -499,6 +499,17 @@ auto target = std::chrono::steady_clock::now() + 5s;
 co_await WaitUntil(target);
 ```
 
+#### `DelayFrameTask(frames)` / `WaitForTask(duration)` / `WaitUntilTask(timepoint)`
+
+確保なしの待機awaiterを`Task<>`として扱うためのラッパーです。待機を変数に保持したり、`WhenAll`用の`std::vector<Task<>>`に入れたり、`WhenAny`で競わせたりする場合に使用します。
+
+```cpp
+std::vector<Task<>> tasks;
+tasks.push_back(DelayFrameTask(3));
+tasks.push_back(WaitForTask(1s));
+co_await WhenAll(std::move(tasks));
+```
+
 #### `WhenAll(tasks...)`
 
 複数のタスクの完了を待機し、結果のタプルを返します。

@@ -5,9 +5,9 @@
 #include <cassert>
 #include <chrono>
 #include <coroutine>
+#include <cstdlib>
 #include <exception>
-#include <functional>
-#include <memory>
+#include <new>
 #include <optional>
 #include <stop_token>
 #include <tuple>
@@ -122,8 +122,13 @@ namespace TKit
 
 		void await_suspend(std::coroutine_handle<> handle) const
 		{
-			assert(schedulerId.IsValid() && "SwitchToSelectedScheduler: invalid scheduler id");
-			schedulerId.GetScheduler()->Schedule(handle);
+			TaskScheduler* scheduler = schedulerId.GetScheduler();
+			assert(scheduler && "SwitchToSelectedScheduler: invalid scheduler id");
+			if (scheduler == nullptr)
+			{
+				std::abort();
+			}
+			scheduler->Schedule(handle);
 		}
 
 		void await_resume() const noexcept
@@ -156,9 +161,7 @@ namespace TKit
 	{
 		using Result = std::invoke_result_t<Func>;
 
-		TaskScheduler* origin = TaskSchedulerManager::CurrentActiveScheduler();
-		assert(origin && "RunOnThreadPool: no scheduler is active on this thread");
-		const TaskSchedulerId originalSchedulerId{origin};
+		const TaskSchedulerId originalSchedulerId{&TaskSchedulerManager::RequireActiveScheduler()};
 
 		co_await SwitchToThreadPool();
 
@@ -208,9 +211,7 @@ namespace TKit
 	{
 		using Result = typename Details::TaskFuncTraits<Func>::ResultType;
 
-		TaskScheduler* origin = TaskSchedulerManager::CurrentActiveScheduler();
-		assert(origin && "RunOnThreadPool: no scheduler is active on this thread");
-		const TaskSchedulerId originalSchedulerId{origin};
+		const TaskSchedulerId originalSchedulerId{&TaskSchedulerManager::RequireActiveScheduler()};
 
 		co_await SwitchToThreadPool();
 
@@ -259,55 +260,154 @@ namespace TKit
 		co_return;
 	}
 
-	inline Task<> CreateTask(std::function<Task<>(std::stop_token)> func, std::stop_token stopToken = {})
+	// `func` is anything invocable as Task<>(std::stop_token); taking it as a
+	// template (by value) avoids the std::function type-erasure allocation.
+	template<typename Func>
+		requires std::is_invocable_r_v<Task<>, Func&, std::stop_token>
+	inline Task<> CreateTask(Func func, std::stop_token stopToken = {})
 	{
 		ThrowIfStopRequested(stopToken);
 		co_await func(stopToken);
 	}
 
-	inline void RunTask(const std::function<Task<>(std::stop_token)>& func, std::stop_token stopToken = {})
+	template<typename Func>
+		requires std::is_invocable_r_v<Task<>, Func&, std::stop_token>
+	inline void RunTask(Func&& func, std::stop_token stopToken = {})
 	{
 		ThrowIfStopRequested(stopToken);
 		func(stopToken).Forget();
 	}
 
-	inline Task<> DelayFrame(int frameCount, std::stop_token stopToken = {})
+	// Allocation-free frame wait: parks the awaiting coroutine directly on the
+	// current scheduler's frame-wait list — no child coroutine, no frame.
+	// A stop request wakes it on the next Update and rethrows from await_resume.
+	struct FrameWaitAwaiter
 	{
-		while (frameCount-- > 0)
+		int remainingFrames = 0;
+		std::stop_token stopToken;
+
+		[[nodiscard]]
+		bool await_ready() const
 		{
 			ThrowIfStopRequested(stopToken);
-			co_yield {};
+			return remainingFrames <= 0;
 		}
 
-		ThrowIfStopRequested(stopToken);
-		co_return;
+		void await_suspend(std::coroutine_handle<> handle) const
+		{
+			TaskSchedulerManager::RequireActiveScheduler().ScheduleFrameWait(handle, remainingFrames, stopToken);
+		}
+
+		void await_resume() const
+		{
+			ThrowIfStopRequested(stopToken);
+		}
+	};
+
+	template<>
+	class AwaitTransformer<FrameWaitAwaiter>
+	{
+	public:
+		static FrameWaitAwaiter Transform(FrameWaitAwaiter awaiter) noexcept
+		{
+			return awaiter;
+		}
+	};
+
+	// Allocation-free time wait; the due time is checked once per Update of the
+	// scheduler the coroutine suspended on.
+	struct TimeWaitAwaiter
+	{
+		std::chrono::steady_clock::time_point due{};
+		std::stop_token stopToken;
+
+		[[nodiscard]]
+		bool await_ready() const
+		{
+			ThrowIfStopRequested(stopToken);
+			return std::chrono::steady_clock::now() >= due;
+		}
+
+		void await_suspend(std::coroutine_handle<> handle) const
+		{
+			TaskSchedulerManager::RequireActiveScheduler().ScheduleTimeWait(handle, due, stopToken);
+		}
+
+		void await_resume() const
+		{
+			ThrowIfStopRequested(stopToken);
+		}
+	};
+
+	template<>
+	class AwaitTransformer<TimeWaitAwaiter>
+	{
+	public:
+		static TimeWaitAwaiter Transform(TimeWaitAwaiter awaiter) noexcept
+		{
+			return awaiter;
+		}
+	};
+
+	[[nodiscard]]
+	inline FrameWaitAwaiter DelayFrame(int frameCount, std::stop_token stopToken = {})
+	{
+		return FrameWaitAwaiter{frameCount, std::move(stopToken)};
 	}
 
 	template<typename Rep, typename Period>
-	inline Task<> WaitFor(std::chrono::duration<Rep, Period> duration, std::stop_token stopToken = {})
+	[[nodiscard]]
+	inline TimeWaitAwaiter WaitFor(std::chrono::duration<Rep, Period> duration, std::stop_token stopToken = {})
 	{
-		const auto start = std::chrono::steady_clock::now();
-		while (std::chrono::steady_clock::now() - start < duration)
-		{
-			ThrowIfStopRequested(stopToken);
-			co_yield {};
-		}
-
-		ThrowIfStopRequested(stopToken);
-		co_return;
+		const auto due = std::chrono::steady_clock::now()
+			+ std::chrono::ceil<std::chrono::steady_clock::duration>(duration);
+		return TimeWaitAwaiter{due, std::move(stopToken)};
 	}
 
 	template<typename Clock, typename Duration>
-	inline Task<> WaitUntil(std::chrono::time_point<Clock, Duration> timePoint, std::stop_token stopToken = {})
+	[[nodiscard]]
+	inline TimeWaitAwaiter WaitUntil(std::chrono::time_point<Clock, Duration> timePoint, std::stop_token stopToken = {})
 	{
-		while (Clock::now() < timePoint)
+		if constexpr (std::is_same_v<Clock, std::chrono::steady_clock>)
 		{
-			ThrowIfStopRequested(stopToken);
-			co_yield {};
+			return TimeWaitAwaiter{
+				std::chrono::ceil<std::chrono::steady_clock::duration>(timePoint),
+				std::move(stopToken)
+			};
 		}
+		else
+		{
+			// Non-steady clocks are converted once at the call; later clock
+			// adjustments do not shift the wait.
+			const auto remaining = timePoint - Clock::now();
+			const auto due = std::chrono::steady_clock::now()
+				+ std::chrono::ceil<std::chrono::steady_clock::duration>(remaining);
+			return TimeWaitAwaiter{due, std::move(stopToken)};
+		}
+	}
 
-		ThrowIfStopRequested(stopToken);
-		co_return;
+	// Task<> wrappers around the allocation-free wait awaiters, for when a wait
+	// has to live as a task — stored in a variable, put into a
+	// std::vector<Task<>> for WhenAll, raced in WhenAny, and so on. Each wrapper
+	// costs the usual one pooled frame allocation.
+	[[nodiscard]]
+	inline Task<> DelayFrameTask(int frameCount, std::stop_token stopToken = {})
+	{
+		co_await DelayFrame(frameCount, std::move(stopToken));
+	}
+
+	template<typename Rep, typename Period>
+	[[nodiscard]]
+	inline Task<> WaitForTask(std::chrono::duration<Rep, Period> duration, std::stop_token stopToken = {})
+	{
+		co_await WaitFor(duration, std::move(stopToken));
+	}
+
+	template<typename Clock, typename Duration>
+	[[nodiscard]]
+	inline Task<> WaitUntilTask(std::chrono::time_point<Clock, Duration> timePoint, std::stop_token stopToken = {})
+	{
+		co_await WaitUntil(timePoint, std::move(stopToken));
 	}
 
 	template<typename... Results>
@@ -350,14 +450,52 @@ namespace TKit
 		// which competitor writes the result; `waiter` hands the parent's
 		// continuation over with the same atomic protocol PromiseStateCore uses,
 		// so completions from other threads cannot lose the wakeup.
+		//
+		// Allocated through the TaskAllocator (pooled by default) with an
+		// intrusive reference count instead of shared_ptr, so a WhenAny call
+		// performs no heap allocation. Like a coroutine frame's header, the
+		// deallocate function is captured at creation.
 		template<typename ResultVariant>
 		struct WhenAnyState
 		{
+			std::atomic<int> refCount{1};
 			std::atomic<bool> winnerClaimed{false};
 			std::atomic<void*> waiter{nullptr}; // nullptr -> handle -> SignaledTag
 			TaskScheduler* resumeScheduler = nullptr;
 			std::optional<ResultVariant> result;
 			std::exception_ptr exception;
+			TaskAllocator::DeallocateFunc deallocate = nullptr;
+			void* deallocateContext = nullptr;
+
+			// Returns a state with one reference owned by the caller.
+			[[nodiscard]]
+			static WhenAnyState* Create()
+			{
+				static_assert(alignof(WhenAnyState) <= alignof(std::max_align_t));
+
+				const TaskAllocator& allocator = PromiseContext::GetCurrent().GetAllocator();
+				void* memory = allocator.Allocate(sizeof(WhenAnyState));
+				auto* state = new (memory) WhenAnyState();
+				state->deallocate = allocator.GetDeallocateFunc();
+				state->deallocateContext = allocator.GetContext();
+				return state;
+			}
+
+			void AddRef() noexcept
+			{
+				refCount.fetch_add(1, std::memory_order_relaxed);
+			}
+
+			void Release() noexcept
+			{
+				if (refCount.fetch_sub(1, std::memory_order_acq_rel) == 1)
+				{
+					const auto deallocateFunc = deallocate;
+					void* context = deallocateContext;
+					this->~WhenAnyState();
+					deallocateFunc(context, this, sizeof(WhenAnyState));
+				}
+			}
 
 			bool TryClaim() noexcept
 			{
@@ -400,6 +538,54 @@ namespace TKit
 			}
 		};
 
+		// Minimal intrusive smart pointer for WhenAnyState. The constructor
+		// adopts the caller's reference; copies add one.
+		template<typename ResultVariant>
+		class WhenAnyStateRef
+		{
+		public:
+			explicit WhenAnyStateRef(WhenAnyState<ResultVariant>* state) noexcept :
+				state_(state)
+			{
+			}
+
+			WhenAnyStateRef(const WhenAnyStateRef& other) noexcept :
+				state_(other.state_)
+			{
+				state_->AddRef();
+			}
+
+			WhenAnyStateRef(WhenAnyStateRef&& other) noexcept :
+				state_(std::exchange(other.state_, nullptr))
+			{
+			}
+
+			WhenAnyStateRef& operator=(const WhenAnyStateRef&) = delete;
+			WhenAnyStateRef& operator=(WhenAnyStateRef&&) = delete;
+
+			~WhenAnyStateRef()
+			{
+				if (state_)
+				{
+					state_->Release();
+				}
+			}
+
+			WhenAnyState<ResultVariant>* operator->() const noexcept
+			{
+				return state_;
+			}
+
+			[[nodiscard]]
+			WhenAnyState<ResultVariant>* Get() const noexcept
+			{
+				return state_;
+			}
+
+		private:
+			WhenAnyState<ResultVariant>* state_;
+		};
+
 		template<typename ResultVariant>
 		struct WhenAnySignalAwaiter
 		{
@@ -428,7 +614,7 @@ namespace TKit
 		};
 
 		template<std::size_t I, typename ResultVariant, typename TaskResult>
-		inline Task<> WhenAnyCompetitor(std::shared_ptr<WhenAnyState<ResultVariant>> state, Task<TaskResult> task)
+		inline Task<> WhenAnyCompetitor(WhenAnyStateRef<ResultVariant> state, Task<TaskResult> task)
 		{
 			try
 			{
@@ -450,7 +636,7 @@ namespace TKit
 		}
 
 		template<std::size_t I, typename ResultVariant, typename First, typename... Others>
-		inline void StartWhenAnyCompetitors(const std::shared_ptr<WhenAnyState<ResultVariant>>& state, Task<First> first, Task<Others>... others)
+		inline void StartWhenAnyCompetitors(const WhenAnyStateRef<ResultVariant>& state, Task<First> first, Task<Others>... others)
 		{
 			WhenAnyCompetitor<I, ResultVariant>(state, std::move(first)).Forget();
 
@@ -480,10 +666,10 @@ namespace TKit
 	{
 		using Variant = WhenAnyResultType<Results...>;
 
-		auto state = std::make_shared<Details::WhenAnyState<Variant>>();
+		const Details::WhenAnyStateRef<Variant> state{Details::WhenAnyState<Variant>::Create()};
 		Details::StartWhenAnyCompetitors<0>(state, Details::ToMonostateIfVoid(std::move(tasks))...);
 
-		co_await Details::WhenAnySignalAwaiter<Variant>{state.get()};
+		co_await Details::WhenAnySignalAwaiter<Variant>{state.Get()};
 
 		if (state->exception)
 		{
@@ -498,10 +684,10 @@ namespace TKit
 	{
 		using Variant = WhenAnyResultType<Results...>;
 
-		auto state = std::make_shared<Details::WhenAnyState<Variant>>();
+		const Details::WhenAnyStateRef<Variant> state{Details::WhenAnyState<Variant>::Create()};
 		Details::StartWhenAnyCompetitors<0>(state, Details::ToMonostateIfVoid(std::move(tasks))...);
 
-		co_await Details::WhenAnySignalAwaiter<Variant>{state.get()};
+		co_await Details::WhenAnySignalAwaiter<Variant>{state.Get()};
 
 		if (state->exception)
 		{
@@ -514,9 +700,9 @@ namespace TKit
 	class AwaitTransformer<std::chrono::duration<Rep, Period>>
 	{
 	public:
-		static auto Transform(const std::chrono::duration<Rep, Period>& duration) noexcept
+		static TimeWaitAwaiter Transform(const std::chrono::duration<Rep, Period>& duration) noexcept
 		{
-			return Task<>::Awaiter{WaitFor(duration)};
+			return WaitFor(duration);
 		}
 	};
 }

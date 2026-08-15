@@ -85,6 +85,7 @@ namespace TKit
 			{
 				state.poolAllocator = std::make_unique<PoolAllocator>();
 				state.allocator = state.poolAllocator->CreateTaskAllocator();
+				state.poolAllocator->Prewarm();
 			}
 
 			const std::size_t threadCount = config.threadPoolSize > 0

@@ -250,9 +250,7 @@ namespace TKit
 				}
 			};
 
-			TaskScheduler* scheduler = TaskSchedulerManager::CurrentActiveScheduler();
-			assert(scheduler && "co_yield: no scheduler is active on this thread");
-			return YieldAwaiter{scheduler};
+			return YieldAwaiter{&TaskSchedulerManager::RequireActiveScheduler()};
 		}
 
 		template<Awaitable U>

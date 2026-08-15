@@ -3,6 +3,7 @@
 
 #include <cassert>
 #include <coroutine>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -83,6 +84,20 @@ namespace TKit
 		{
 			auto& stack = ActivationStack();
 			return stack.empty() ? nullptr : stack.back();
+		}
+
+		// Like CurrentActiveScheduler, but an activation is required: aborts
+		// instead of returning null, so callers can dereference unconditionally.
+		[[nodiscard]]
+		static TaskScheduler& RequireActiveScheduler() noexcept
+		{
+			TaskScheduler* scheduler = CurrentActiveScheduler();
+			assert(scheduler && "TaskSchedulerManager: no scheduler is active on this thread");
+			if (scheduler == nullptr)
+			{
+				std::abort();
+			}
+			return *scheduler;
 		}
 
 		TaskSchedulerManager(const TaskSchedulerManager&) = delete;

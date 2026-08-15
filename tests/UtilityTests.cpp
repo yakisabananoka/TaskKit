@@ -854,6 +854,69 @@ namespace TKit::Tests
 		EXPECT_EQ(result, 42);
 	}
 
+	TEST_F(UtilityTests, DelayFrameTaskComposesWithWhenAllVector)
+	{
+		bool completed = false;
+
+		auto allTask = [&]() -> Task<>
+		{
+			std::vector<Task<>> tasks;
+			tasks.push_back(DelayFrameTask(1));
+			tasks.push_back(DelayFrameTask(2));
+
+			co_await WhenAll(std::move(tasks));
+			completed = true;
+			co_return;
+		};
+
+		allTask().Forget();
+		EXPECT_FALSE(completed);
+
+		RunScheduler(1);
+		EXPECT_FALSE(completed);
+
+		RunScheduler(1);
+		EXPECT_TRUE(completed);
+	}
+
+	TEST_F(UtilityTests, WaitForTaskWrapper)
+	{
+		int counter = 0;
+
+		auto task = [&]() -> Task<>
+		{
+			counter++;
+			auto wait = WaitForTask(50ms);
+			co_await std::move(wait);
+			counter++;
+			co_return;
+		};
+
+		const auto start = TestClock::now();
+
+		task().Forget();
+		EXPECT_EQ(counter, 1);
+
+		RunSchedulerFor(start, 50ms);
+		EXPECT_EQ(counter, 2);
+	}
+
+	TEST_F(UtilityTests, WaitUntilTaskWrapperPastTime)
+	{
+		int counter = 0;
+
+		auto task = [&]() -> Task<>
+		{
+			counter++;
+			co_await WaitUntilTask(TestClock::now() - 1ms);
+			counter++;
+			co_return;
+		};
+
+		task().Forget();
+		EXPECT_EQ(counter, 2);
+	}
+
 	TEST_F(UtilityTests, RunOnThreadPoolReturnsToOriginalScheduler)
 	{
 		std::latch latch{1};

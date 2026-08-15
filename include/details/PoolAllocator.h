@@ -270,6 +270,32 @@ namespace TKit
 			}
 		}
 
+		// Pre-populates the calling thread's pools so the first allocations do
+		// not pay for slab creation. Covers size classes up to maxBlockSize.
+		void Prewarm(std::size_t maxBlockSize = 1024)
+		{
+			ThreadLocalPool* pool = GetOrCreateThreadPool();
+
+			for (std::size_t i = 0; i < PoolSizes.size(); ++i)
+			{
+				if (PoolSizes[i] > maxBlockSize)
+				{
+					break;
+				}
+
+				auto& state = pool->pools[i];
+				if (state.freeList != nullptr || state.slabs != nullptr)
+				{
+					continue;
+				}
+
+				void* block = pool->AllocateNewSlab(i);
+				auto* node = new (block) FreeNode{};
+				node->next = state.freeList;
+				state.freeList = node;
+			}
+		}
+
 		TaskAllocator CreateTaskAllocator()
 		{
 			return TaskAllocator{
