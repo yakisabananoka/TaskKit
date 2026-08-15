@@ -2,12 +2,15 @@
 #define TASKKIT_TASK_SYSTEM_H
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <coroutine>
 #include <cstddef>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <thread>
+#include <utility>
 #include "PoolAllocator.h"
 #include "PromiseContext.h"
 #include "TaskSchedulerId.h"
@@ -24,57 +27,68 @@ namespace TKit
 	class TaskSystem final
 	{
 	public:
-		// RAII guard for the thread-local scheduler activation stack.
+		// RAII guard for the thread-local scheduler activation stack. Remembers
+		// which scheduler it activated so a non-LIFO release is caught, and only
+		// touches thread-local state on release — destroying a guard after
+		// Shutdown() is safe.
 		struct SchedulerActivation final
 		{
-			SchedulerActivation() : valid_(false)
+			SchedulerActivation() : scheduler_(nullptr)
 			{
 			}
 
-			explicit SchedulerActivation(const TaskSchedulerId& id) : valid_(true)
+			explicit SchedulerActivation(const TaskSchedulerId& id) :
+				scheduler_(id.GetScheduler())
 			{
-				GetSchedulerManager().ActivateScheduler(id);
+				TaskSchedulerManager::ActivateScheduler(id);
 			}
 
 			~SchedulerActivation()
 			{
-				if (valid_)
+				if (scheduler_)
 				{
-					GetSchedulerManager().DeactivateScheduler();
+					TaskSchedulerManager::DeactivateScheduler(scheduler_);
 				}
 			}
 
 			SchedulerActivation(const SchedulerActivation&) = delete;
 			SchedulerActivation& operator=(const SchedulerActivation&) = delete;
 
-			SchedulerActivation(SchedulerActivation&& other) noexcept : valid_(other.valid_)
+			SchedulerActivation(SchedulerActivation&& other) noexcept :
+				scheduler_(std::exchange(other.scheduler_, nullptr))
 			{
-				other.valid_ = false;
 			}
 
 			SchedulerActivation& operator=(SchedulerActivation&& other) noexcept
 			{
 				if (this != &other)
 				{
-					if (valid_)
+					if (scheduler_)
 					{
-						GetSchedulerManager().DeactivateScheduler();
+						TaskSchedulerManager::DeactivateScheduler(scheduler_);
 					}
-					valid_ = other.valid_;
-					other.valid_ = false;
+					scheduler_ = std::exchange(other.scheduler_, nullptr);
 				}
 				return *this;
 			}
 
 		private:
-			bool valid_;
+			TaskScheduler* scheduler_;
 		};
 
 		static void Initialize(const TaskSystemConfiguration& config = TaskSystemConfiguration{})
 		{
+			// Initializing twice would re-create the manager under live workers;
+			// abort in release builds too rather than corrupt memory.
 			assert(!IsInitialized() && "TaskSystem already initialized.");
+			if (IsInitialized())
+			{
+				std::abort();
+			}
+
 			auto& state = GetSharedState();
 			state.mainThreadId = std::this_thread::get_id();
+			state.reservedTaskCount = config.reservedTaskCount;
 			state.schedulerManager.emplace();
 
 			if (config.allocator.has_value())
@@ -101,14 +115,28 @@ namespace TKit
 			state.promiseContext.emplace(state.allocator, *state.schedulerManager, *state.threadPool);
 			PromiseContext::SetCurrent(&state.promiseContext.value());
 
-			state.isInitialized = true;
+			state.isInitialized.store(true, std::memory_order_release);
 		}
 
+		// Stops the thread pool promptly (pool tasks still queued or parked are
+		// destroyed, not completed) and tears everything down. Every Task object
+		// for a not-yet-finished task must be gone before this call: frames the
+		// schedulers destroy here must not be touched by a Task destructor
+		// afterwards. Drain your schedulers first if completion matters.
 		static void Shutdown()
 		{
 			assert(IsInitialized() && "TaskSystem not initialized. Call TaskSystem::Initialize() first.");
+			if (!IsInitialized())
+			{
+				std::abort();
+			}
+
 			auto& state = GetSharedState();
 			assert(std::this_thread::get_id() == state.mainThreadId && "TaskSystem::Shutdown: main thread mismatch.");
+			if (std::this_thread::get_id() != state.mainThreadId)
+			{
+				std::abort();
+			}
 
 			// Order matters: join the workers, then destroy the schedulers (any
 			// leftover queued frame frees itself through its frame header), and
@@ -121,20 +149,20 @@ namespace TKit
 			state.poolAllocator.reset();
 
 			state.mainThreadId = {};
-			state.isInitialized = false;
+			state.isInitialized.store(false, std::memory_order_release);
 		}
 
 		[[nodiscard]]
 		static bool IsInitialized()
 		{
-			return GetSharedState().isInitialized;
+			return GetSharedState().isInitialized.load(std::memory_order_acquire);
 		}
 
 		[[nodiscard]]
 		static TaskSchedulerId GetActivatedSchedulerId()
 		{
 			assert(IsInitialized() && "TaskSystem not initialized. Call TaskSystem::Initialize() first.");
-			return GetSchedulerManager().GetActivatedSchedulerId();
+			return TaskSchedulerManager::GetActivatedSchedulerId();
 		}
 
 		[[nodiscard]]
@@ -148,7 +176,7 @@ namespace TKit
 		static void UpdateActivatedScheduler()
 		{
 			assert(IsInitialized() && "TaskSystem not initialized. Call TaskSystem::Initialize() first.");
-			GetSchedulerManager().UpdateActivatedScheduler();
+			TaskSchedulerManager::UpdateActivatedScheduler();
 		}
 
 		[[nodiscard]]
@@ -164,11 +192,15 @@ namespace TKit
 			GetSchedulerManager().Schedule(id, handle);
 		}
 
+		// reservedTaskCount defaults to the value configured at Initialize
+		// (TaskSystemConfiguration::reservedTaskCount).
 		[[nodiscard]]
-		static TaskSchedulerId CreateScheduler(std::optional<std::thread::id> threadId = std::nullopt, std::size_t reservedTaskCount = 100)
+		static TaskSchedulerId CreateScheduler(std::optional<std::thread::id> threadId = std::nullopt, std::optional<std::size_t> reservedTaskCount = std::nullopt)
 		{
 			assert(IsInitialized() && "TaskSystem not initialized. Call TaskSystem::Initialize() first.");
-			return GetSchedulerManager().CreateScheduler(threadId.value_or(std::this_thread::get_id()), reservedTaskCount);
+			return GetSchedulerManager().CreateScheduler(
+				threadId.value_or(std::this_thread::get_id()),
+				reservedTaskCount.value_or(GetSharedState().reservedTaskCount));
 		}
 
 	private:
@@ -180,7 +212,8 @@ namespace TKit
 			std::optional<TaskSchedulerManager> schedulerManager;
 			std::unique_ptr<ThreadPool> threadPool;
 			std::optional<PromiseContext> promiseContext;
-			bool isInitialized = false;
+			std::size_t reservedTaskCount = DefaultReservedTaskCount;
+			std::atomic<bool> isInitialized{false};
 		};
 
 		[[nodiscard]]

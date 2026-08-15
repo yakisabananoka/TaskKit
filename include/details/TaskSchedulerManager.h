@@ -35,46 +35,80 @@ namespace TKit
 			return id;
 		}
 
+		// Precondition violations below guard memory safety, so they abort in
+		// release builds too instead of compiling down to undefined behavior.
+
 		void Schedule(const TaskSchedulerId& id, std::coroutine_handle<> handle)
 		{
-			assert(id.IsValid() && "TaskSchedulerManager::Schedule: invalid scheduler id");
-			id.GetScheduler()->Schedule(handle);
+			TaskScheduler* scheduler = id.GetScheduler();
+			assert(scheduler && "TaskSchedulerManager::Schedule: invalid scheduler id");
+			if (scheduler == nullptr)
+			{
+				std::abort();
+			}
+			scheduler->Schedule(handle);
 		}
 
-		void ActivateScheduler(const TaskSchedulerId& id)
+		// The activation stack is thread-local, so activation management is
+		// static: it works even while no manager instance is alive (e.g. an
+		// activation guard destroyed after TaskSystem::Shutdown).
+		static void ActivateScheduler(const TaskSchedulerId& id)
 		{
-			assert(id.IsValid() && "TaskSchedulerManager::ActivateScheduler: invalid scheduler id");
-			assert(std::this_thread::get_id() == id.GetThreadId() && "TaskSchedulerManager: cannot activate a scheduler owned by another thread");
-			ActivationStack().push_back(id.GetScheduler());
+			TaskScheduler* scheduler = id.GetScheduler();
+			assert(scheduler && "TaskSchedulerManager::ActivateScheduler: invalid scheduler id");
+			if (scheduler == nullptr || scheduler->GetOwnerThreadId() != std::this_thread::get_id())
+			{
+				assert(false && "TaskSchedulerManager: cannot activate a scheduler owned by another thread");
+				std::abort();
+			}
+			ActivationStack().push_back(scheduler);
 		}
 
-		void DeactivateScheduler()
+		static void DeactivateScheduler()
 		{
 			auto& stack = ActivationStack();
 			assert(!stack.empty() && "TaskSchedulerManager: no active scheduler in current context");
+			if (stack.empty())
+			{
+				std::abort();
+			}
+			stack.pop_back();
+		}
+
+		// Deactivation that verifies LIFO order: aborts if `expected` is not the
+		// innermost activation, instead of silently popping someone else's.
+		static void DeactivateScheduler(TaskScheduler* expected)
+		{
+			auto& stack = ActivationStack();
+			assert(!stack.empty() && stack.back() == expected && "SchedulerActivation destroyed out of LIFO order");
+			if (stack.empty() || stack.back() != expected)
+			{
+				std::abort();
+			}
 			stack.pop_back();
 		}
 
 		[[nodiscard]]
-		TaskSchedulerId GetActivatedSchedulerId() const
+		static TaskSchedulerId GetActivatedSchedulerId()
 		{
-			auto& stack = ActivationStack();
-			assert(!stack.empty() && "TaskSchedulerManager: no active scheduler in current context");
-			return TaskSchedulerId{stack.back()};
+			return TaskSchedulerId{&RequireActiveScheduler()};
 		}
 
-		void UpdateActivatedScheduler()
+		static void UpdateActivatedScheduler()
 		{
-			auto& stack = ActivationStack();
-			assert(!stack.empty() && "TaskSchedulerManager: no active scheduler in current context");
-			stack.back()->Update();
+			RequireActiveScheduler().Update();
 		}
 
 		[[nodiscard]]
 		std::size_t GetPendingTaskCount(const TaskSchedulerId& id) const
 		{
-			assert(id.IsValid() && "TaskSchedulerManager::GetPendingTaskCount: invalid scheduler id");
-			return id.GetScheduler()->GetPendingTaskCount();
+			TaskScheduler* scheduler = id.GetScheduler();
+			assert(scheduler && "TaskSchedulerManager::GetPendingTaskCount: invalid scheduler id");
+			if (scheduler == nullptr)
+			{
+				std::abort();
+			}
+			return scheduler->GetPendingTaskCount();
 		}
 
 		// The scheduler currently running on this thread, or nullptr outside of

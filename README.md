@@ -259,6 +259,8 @@ Task<> WhenAnyExample()
 
 ### Thread Pool Operations
 
+> **Thread affinity note**: When a task completes, its awaiter is resumed **inline on the thread the task completed on**. Awaiting a task that finishes on a pool worker leaves the rest of your coroutine running on that worker. Use `SwitchToSelectedScheduler` to get back to a specific scheduler, or `RunOnThreadPool`, which returns automatically.
+
 ```cpp
 Task<> ThreadPoolExample(TaskSchedulerId mainSchedulerId)
 {
@@ -452,7 +454,7 @@ The main coroutine type representing an asynchronous operation.
 Static class managing schedulers and thread pool.
 
 - `Initialize(config)` - Initialize TaskSystem with optional configuration
-- `Shutdown()` - Cleanup and destroy thread pool
+- `Shutdown()` - Stops the thread pool promptly (pool tasks still queued or waiting are destroyed, not completed) and tears everything down. Drain your schedulers first if completion matters, and make sure no `Task` object for an unfinished task outlives this call.
 - `IsInitialized()` - Check if TaskSystem is initialized
 - `CreateScheduler(threadId, reservedCount)` - Create new scheduler, returns ID
 - `ActivateScheduler(id)` - Returns RAII guard that activates scheduler

@@ -12,6 +12,9 @@
 
 namespace TKit
 {
+	// Default number of task slots each scheduler pre-reserves in its queues.
+	inline constexpr std::size_t DefaultReservedTaskCount = 100;
+
 	// A frame-based coroutine queue owned by a single thread.
 	//
 	// - Schedule() may be called from any thread. The owner thread appends to a
@@ -49,6 +52,10 @@ namespace TKit
 			timeWaits_.reserve(reservedTaskCount);
 		}
 
+		// Destroys every frame still queued or parked here. Frames owned by a
+		// still-alive Task object must not reach this point: destroy or detach
+		// (complete/Forget) all tasks before tearing the scheduler down, or the
+		// Task destructor will touch freed memory afterwards.
 		~TaskScheduler()
 		{
 			for (const auto handle : local_)
@@ -76,14 +83,22 @@ namespace TKit
 			// never underflow.
 			pendingCount_.fetch_add(1, std::memory_order_release);
 
-			if (std::this_thread::get_id() == ownerId_)
+			try
 			{
-				local_.push_back(handle);
+				if (std::this_thread::get_id() == ownerId_)
+				{
+					local_.push_back(handle);
+				}
+				else
+				{
+					std::lock_guard lock(remoteMutex_);
+					remote_.push_back(handle);
+				}
 			}
-			else
+			catch (...)
 			{
-				std::lock_guard lock(remoteMutex_);
-				remote_.push_back(handle);
+				pendingCount_.fetch_sub(1, std::memory_order_release);
+				throw;
 			}
 		}
 
@@ -95,7 +110,15 @@ namespace TKit
 			assert(frameCount > 0 && "TaskScheduler::ScheduleFrameWait: frameCount must be positive");
 
 			pendingCount_.fetch_add(1, std::memory_order_release);
-			frameWaits_.push_back({handle, frameCount, std::move(stopToken)});
+			try
+			{
+				frameWaits_.push_back({handle, frameCount, std::move(stopToken)});
+			}
+			catch (...)
+			{
+				pendingCount_.fetch_sub(1, std::memory_order_release);
+				throw;
+			}
 		}
 
 		// Parks `handle` until `due` (checked once per Update). Owner thread only.
@@ -104,13 +127,29 @@ namespace TKit
 			assert(std::this_thread::get_id() == ownerId_ && "TaskScheduler::ScheduleTimeWait: called off the owner thread");
 
 			pendingCount_.fetch_add(1, std::memory_order_release);
-			timeWaits_.push_back({handle, due, std::move(stopToken)});
+			try
+			{
+				timeWaits_.push_back({handle, due, std::move(stopToken)});
+			}
+			catch (...)
+			{
+				pendingCount_.fetch_sub(1, std::memory_order_release);
+				throw;
+			}
 		}
 
 		void Update()
 		{
 			assert(std::this_thread::get_id() == ownerId_ && "TaskScheduler::Update: called off the owner thread");
-			assert(running_.empty() && "TaskScheduler::Update: reentrant update is not supported");
+
+			// Reentrant updates (a resumed coroutine calling Update on its own
+			// scheduler) would swap the batch buffer out from under the loop
+			// below; treat them as a no-op instead of corrupting state.
+			if (!running_.empty())
+			{
+				assert(false && "TaskScheduler::Update: reentrant update is not supported");
+				return;
+			}
 
 			{
 				std::lock_guard lock(remoteMutex_);
@@ -126,8 +165,11 @@ namespace TKit
 			for (const auto handle : running_)
 			{
 				handle.resume();
-				pendingCount_.fetch_sub(1, std::memory_order_release);
 			}
+			// One batched decrement instead of one atomic RMW per resume. Until
+			// it lands the count reads high, never low, so pollers cannot see a
+			// false "drained" state.
+			pendingCount_.fetch_sub(running_.size(), std::memory_order_release);
 			running_.clear();
 		}
 

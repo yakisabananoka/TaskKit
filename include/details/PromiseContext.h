@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <cassert>
+#include <cstdlib>
 
 namespace TKit
 {
@@ -34,6 +35,12 @@ namespace TKit
 		{
 			const PromiseContext* context = GetCurrentStorage().load(std::memory_order_acquire);
 			assert(context && "PromiseContext::GetCurrent: no context set. Call TaskSystem::Initialize() first.");
+			if (context == nullptr)
+			{
+				// Creating tasks before Initialize / after Shutdown would
+				// otherwise dereference null inside the frame allocator.
+				std::abort();
+			}
 			return *context;
 		}
 

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <optional>
 #include "TaskAllocator.h"
+#include "TaskScheduler.h"
 
 namespace TKit
 {
@@ -14,7 +15,10 @@ namespace TKit
 
 		std::optional<TaskAllocator> allocator;
 		std::size_t threadPoolSize = 0;
-		std::size_t reservedTaskCount = 100;
+
+		// Applied to the thread-pool schedulers and used as the default for
+		// TaskSystem::CreateScheduler.
+		std::size_t reservedTaskCount = DefaultReservedTaskCount;
 
 		// How long a pool worker waits between updates while frame-waiting
 		// coroutines (co_yield / WaitFor) are parked on it. Smaller values lower

@@ -37,14 +37,12 @@ namespace TKit
 			std::uint8_t poolIndex;
 		};
 
-		static constexpr std::size_t MetaSize = sizeof(BlockMeta);
 		static constexpr std::size_t AlignedMetaSize =
-			(MetaSize + alignof(std::max_align_t) - 1) & ~(alignof(std::max_align_t) - 1);
+			Details::AlignUp(sizeof(BlockMeta), alignof(std::max_align_t));
 
 		struct alignas(std::max_align_t) Slab
 		{
 			Slab* next;
-			std::size_t size;
 		};
 
 		struct FreeNode
@@ -159,7 +157,6 @@ namespace TKit
 
 				void* slabMemory = ::operator new(slabTotalSize);
 				auto* slab = new (slabMemory) Slab{};
-				slab->size = slabTotalSize;
 				slab->next = pools[poolIndex].slabs;
 				pools[poolIndex].slabs = slab;
 
@@ -246,11 +243,6 @@ namespace TKit
 
 			ThreadLocalPool* ownerPool = meta->ownerPool;
 			const std::size_t poolIndex = meta->poolIndex;
-
-			if (ownerPool == nullptr)
-			{
-				return;
-			}
 
 			if (poolIndex >= PoolSizes.size())
 			{

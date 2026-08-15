@@ -6,6 +6,15 @@
 
 namespace TKit
 {
+	namespace Details
+	{
+		[[nodiscard]]
+		constexpr std::size_t AlignUp(std::size_t size, std::size_t alignment) noexcept
+		{
+			return (size + alignment - 1) & ~(alignment - 1);
+		}
+	}
+
 	// Type-erased allocator handle used for coroutine frames. Copyable; the
 	// pointed-to context must outlive every frame allocated through it.
 	class TaskAllocator

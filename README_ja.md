@@ -259,6 +259,8 @@ Task<> WhenAnyExample()
 
 ### スレッドプール操作
 
+> **スレッド親和性の注意**: タスクの完了時、awaitしていた側のコルーチンは**完了したスレッド上でインラインに再開**されます。ワーカー上で完了するタスクをawaitすると、その後のコードはワーカー上で実行され続けます。特定のスケジューラに戻る必要がある場合は`SwitchToSelectedScheduler`を使うか、自動で元に戻る`RunOnThreadPool`を使用してください。
+
 ```cpp
 Task<> ThreadPoolExample(TaskSchedulerId mainSchedulerId)
 {
@@ -452,7 +454,7 @@ Task<> ProcessEvent()
 スケジューラとスレッドプールを管理する静的クラスです。
 
 - `Initialize(config)` - オプションの設定でTaskSystemを初期化します
-- `Shutdown()` - クリーンアップしてスレッドプールを破棄します
+- `Shutdown()` - スレッドプールを即時停止し(キュー・待機中のプールタスクは完了されず破棄されます)、全体を破棄します。完了が必要な場合は事前にスケジューラをドレインしてください。また、未完了タスクの`Task`オブジェクトをこの呼び出し以降まで保持しないでください。
 - `IsInitialized()` - TaskSystemが初期化されているかチェックします
 - `CreateScheduler(threadId, reservedCount)` - 新しいスケジューラを作成し、IDを返します
 - `ActivateScheduler(id)` - スケジューラをアクティブ化するRAIIガードを返します

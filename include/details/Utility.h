@@ -43,6 +43,20 @@ namespace TKit
 		template<typename T>
 		using TaskFuncTraits = TaskTraits<std::invoke_result_t<T>>;
 
+		// Result type of RunOnThreadPool: the task's result when `Func` returns a
+		// Task, the plain return type otherwise.
+		template<typename Func, bool IsTaskFunc = TaskFuncTraits<Func>::IsTask>
+		struct RunOnThreadPoolResult
+		{
+			using Type = typename TaskFuncTraits<Func>::ResultType;
+		};
+
+		template<typename Func>
+		struct RunOnThreadPoolResult<Func, false>
+		{
+			using Type = std::invoke_result_t<Func&>;
+		};
+
 		template<typename T, typename... Results>
 		constexpr bool FulfillsAllType = (std::is_same_v<T, Results> && ...);
 
@@ -50,23 +64,7 @@ namespace TKit
 		constexpr bool FulfillsAllVoid = FulfillsAllType<void, Results...>;
 
 		template<typename... Results>
-		constexpr bool FulfillsSameType = (std::is_same_v<Results, std::tuple_element_t<0, std::tuple<Results...>>> && ...);
-
-		template<typename... Results>
 		constexpr bool HasAnyType = (sizeof...(Results) > 0);
-
-		template<typename Result>
-		inline auto ToMonostateIfVoid(Task<Result>&& task)
-		{
-			if constexpr (std::is_void_v<Result>)
-			{
-				return std::move(task).ToMonostateTask();
-			}
-			else
-			{
-				return std::move(task);
-			}
-		}
 	}
 
 	inline void ThrowIfStopRequested(const std::stop_token& stopToken)
@@ -100,16 +98,6 @@ namespace TKit
 		return SwitchToThreadPoolAwaiter{};
 	}
 
-	template<>
-	class AwaitTransformer<SwitchToThreadPoolAwaiter>
-	{
-	public:
-		static SwitchToThreadPoolAwaiter Transform(SwitchToThreadPoolAwaiter awaiter) noexcept
-		{
-			return awaiter;
-		}
-	};
-
 	struct SwitchToSelectedSchedulerAwaiter
 	{
 		TaskSchedulerId schedulerId;
@@ -141,25 +129,17 @@ namespace TKit
 		return SwitchToSelectedSchedulerAwaiter{schedulerId};
 	}
 
-	template<>
-	class AwaitTransformer<SwitchToSelectedSchedulerAwaiter>
-	{
-	public:
-		static SwitchToSelectedSchedulerAwaiter Transform(SwitchToSelectedSchedulerAwaiter awaiter) noexcept
-		{
-			return awaiter;
-		}
-	};
-
 	// Runs `func` on the thread pool and always returns to the scheduler that was
 	// active at the call, even when `func` throws (the exception is rethrown on
-	// the original scheduler). `func` is taken by value: the coroutine must own
-	// it, since the caller's temporaries may die while the pool still runs.
+	// the original scheduler). `func` may return a value, void, or a Task of
+	// either; it is taken by value because the caller's temporaries may die
+	// while the pool still runs.
 	template<typename Func>
-		requires std::is_invocable_v<Func> && (!Details::TaskFuncTraits<Func>::IsTask)
-	inline Task<std::invoke_result_t<Func>> RunOnThreadPool(Func func)
+		requires std::is_invocable_v<Func&>
+	inline Task<typename Details::RunOnThreadPoolResult<Func>::Type> RunOnThreadPool(Func func)
 	{
-		using Result = std::invoke_result_t<Func>;
+		using Result = typename Details::RunOnThreadPoolResult<Func>::Type;
+		constexpr bool ReturnsTask = Details::TaskFuncTraits<Func>::IsTask;
 
 		const TaskSchedulerId originalSchedulerId{&TaskSchedulerManager::RequireActiveScheduler()};
 
@@ -170,7 +150,14 @@ namespace TKit
 		{
 			try
 			{
-				func();
+				if constexpr (ReturnsTask)
+				{
+					co_await func();
+				}
+				else
+				{
+					func();
+				}
 			}
 			catch (...)
 			{
@@ -189,57 +176,14 @@ namespace TKit
 			std::optional<Result> result;
 			try
 			{
-				result.emplace(func());
-			}
-			catch (...)
-			{
-				exception = std::current_exception();
-			}
-
-			co_await SwitchToSelectedScheduler(originalSchedulerId);
-			if (exception)
-			{
-				std::rethrow_exception(exception);
-			}
-			co_return std::move(*result);
-		}
-	}
-
-	template<typename Func>
-		requires std::is_invocable_v<Func> && (Details::TaskFuncTraits<Func>::IsTask)
-	inline Task<typename Details::TaskFuncTraits<Func>::ResultType> RunOnThreadPool(Func func)
-	{
-		using Result = typename Details::TaskFuncTraits<Func>::ResultType;
-
-		const TaskSchedulerId originalSchedulerId{&TaskSchedulerManager::RequireActiveScheduler()};
-
-		co_await SwitchToThreadPool();
-
-		std::exception_ptr exception;
-		if constexpr (std::is_void_v<Result>)
-		{
-			try
-			{
-				co_await func();
-			}
-			catch (...)
-			{
-				exception = std::current_exception();
-			}
-
-			co_await SwitchToSelectedScheduler(originalSchedulerId);
-			if (exception)
-			{
-				std::rethrow_exception(exception);
-			}
-			co_return;
-		}
-		else
-		{
-			std::optional<Result> result;
-			try
-			{
-				result.emplace(co_await func());
+				if constexpr (ReturnsTask)
+				{
+					result.emplace(co_await func());
+				}
+				else
+				{
+					result.emplace(func());
+				}
 			}
 			catch (...)
 			{
@@ -304,16 +248,6 @@ namespace TKit
 		}
 	};
 
-	template<>
-	class AwaitTransformer<FrameWaitAwaiter>
-	{
-	public:
-		static FrameWaitAwaiter Transform(FrameWaitAwaiter awaiter) noexcept
-		{
-			return awaiter;
-		}
-	};
-
 	// Allocation-free time wait; the due time is checked once per Update of the
 	// scheduler the coroutine suspended on.
 	struct TimeWaitAwaiter
@@ -336,16 +270,6 @@ namespace TKit
 		void await_resume() const
 		{
 			ThrowIfStopRequested(stopToken);
-		}
-	};
-
-	template<>
-	class AwaitTransformer<TimeWaitAwaiter>
-	{
-	public:
-		static TimeWaitAwaiter Transform(TimeWaitAwaiter awaiter) noexcept
-		{
-			return awaiter;
 		}
 	};
 
@@ -413,30 +337,116 @@ namespace TKit
 	template<typename... Results>
 	using WhenAllResultType = std::tuple<std::conditional_t<std::is_void_v<Results>, std::monostate, Results>...>;
 
+	namespace Details
+	{
+		// Awaits one WhenAll element without letting its exception escape: the
+		// first failure is parked in `firstException` so the remaining tasks are
+		// still awaited (nothing keeps running unobserved), and rethrown once
+		// every task finished. Void results surface as monostate; a failed
+		// element yields nullopt.
+		template<typename Result>
+		struct WhenAllElementAwaiter
+		{
+			using Element = std::conditional_t<std::is_void_v<Result>, std::monostate, Result>;
+
+			typename Task<Result>::Awaiter inner;
+			std::exception_ptr* firstException;
+
+			[[nodiscard]]
+			bool await_ready() const noexcept
+			{
+				return inner.await_ready();
+			}
+
+			bool await_suspend(std::coroutine_handle<> handle) noexcept
+			{
+				return inner.await_suspend(handle);
+			}
+
+			std::optional<Element> await_resume() noexcept
+			{
+				try
+				{
+					if constexpr (std::is_void_v<Result>)
+					{
+						inner.await_resume();
+						return std::monostate{};
+					}
+					else
+					{
+						return inner.await_resume();
+					}
+				}
+				catch (...)
+				{
+					if (!*firstException)
+					{
+						*firstException = std::current_exception();
+					}
+					return std::nullopt;
+				}
+			}
+		};
+
+		template<typename Result>
+		[[nodiscard]]
+		inline WhenAllElementAwaiter<Result> AwaitWhenAllElement(Task<Result>&& task, std::exception_ptr& firstException)
+		{
+			return WhenAllElementAwaiter<Result>{typename Task<Result>::Awaiter{std::move(task)}, &firstException};
+		}
+	}
+
 	// Tasks are taken by value: they are eager, so they all already run; the
 	// coroutine owns them for its whole lifetime (no dangling if the returned
-	// task is stored and awaited later).
+	// task is stored and awaited later). If any task fails, the rest are still
+	// awaited and the first exception is rethrown once all of them finished.
 	template<typename... Results>
 		requires Details::HasAnyType<Results...> && (!Details::FulfillsAllVoid<Results...>)
 	inline Task<WhenAllResultType<Results...>> WhenAll(Task<Results>... tasks)
 	{
+		std::exception_ptr firstException;
+
 		// Braced initialization guarantees left-to-right evaluation of the awaits.
-		co_return WhenAllResultType<Results...>{co_await Details::ToMonostateIfVoid(std::move(tasks))...};
+		auto results = std::tuple{co_await Details::AwaitWhenAllElement(std::move(tasks), firstException)...};
+
+		if (firstException)
+		{
+			std::rethrow_exception(firstException);
+		}
+
+		co_return std::apply([](auto&&... values)
+		{
+			return WhenAllResultType<Results...>{std::move(*values)...};
+		}, std::move(results));
 	}
 
 	template<typename... Results>
 		requires Details::HasAnyType<Results...> && Details::FulfillsAllVoid<Results...>
 	inline Task<> WhenAll(Task<Results>... tasks)
 	{
-		(co_await std::move(tasks), ...);
+		std::exception_ptr firstException;
+
+		(static_cast<void>(co_await Details::AwaitWhenAllElement(std::move(tasks), firstException)), ...);
+
+		if (firstException)
+		{
+			std::rethrow_exception(firstException);
+		}
 		co_return;
 	}
 
 	inline Task<> WhenAll(std::vector<Task<>> tasks)
 	{
+		std::exception_ptr firstException;
+
 		for (auto& task : tasks)
 		{
-			co_await std::move(task);
+			static_cast<void>(co_await Details::AwaitWhenAllElement(std::move(task), firstException));
+		}
+
+		if (firstException)
+		{
+			std::rethrow_exception(firstException);
 		}
 		co_return;
 	}
@@ -618,11 +628,33 @@ namespace TKit
 		{
 			try
 			{
-				auto value = co_await std::move(task);
-				if (state->TryClaim())
+				if constexpr (std::is_void_v<TaskResult>)
 				{
-					state->result.emplace(std::in_place_index<I>, std::move(value));
-					state->Signal();
+					co_await std::move(task);
+					if (state->TryClaim())
+					{
+						state->result.emplace(std::in_place_index<I>);
+						state->Signal();
+					}
+				}
+				else
+				{
+					auto value = co_await std::move(task);
+					if (state->TryClaim())
+					{
+						// Once claimed, Signal() must always follow — a throwing
+						// result move would otherwise leave the parent suspended
+						// forever. Publish the exception instead.
+						try
+						{
+							state->result.emplace(std::in_place_index<I>, std::move(value));
+						}
+						catch (...)
+						{
+							state->exception = std::current_exception();
+						}
+						state->Signal();
+					}
 				}
 			}
 			catch (...)
@@ -647,16 +679,6 @@ namespace TKit
 		}
 	}
 
-	template<typename ResultVariant>
-	class AwaitTransformer<Details::WhenAnySignalAwaiter<ResultVariant>>
-	{
-	public:
-		static auto Transform(Details::WhenAnySignalAwaiter<ResultVariant> awaiter) noexcept
-		{
-			return awaiter;
-		}
-	};
-
 	// Completes when the first task completes. The remaining tasks keep running
 	// to completion in the background (no cancellation is imposed on them). If
 	// the first task to finish failed, its exception is rethrown here.
@@ -667,7 +689,7 @@ namespace TKit
 		using Variant = WhenAnyResultType<Results...>;
 
 		const Details::WhenAnyStateRef<Variant> state{Details::WhenAnyState<Variant>::Create()};
-		Details::StartWhenAnyCompetitors<0>(state, Details::ToMonostateIfVoid(std::move(tasks))...);
+		Details::StartWhenAnyCompetitors<0>(state, std::move(tasks)...);
 
 		co_await Details::WhenAnySignalAwaiter<Variant>{state.Get()};
 
@@ -685,7 +707,7 @@ namespace TKit
 		using Variant = WhenAnyResultType<Results...>;
 
 		const Details::WhenAnyStateRef<Variant> state{Details::WhenAnyState<Variant>::Create()};
-		Details::StartWhenAnyCompetitors<0>(state, Details::ToMonostateIfVoid(std::move(tasks))...);
+		Details::StartWhenAnyCompetitors<0>(state, std::move(tasks)...);
 
 		co_await Details::WhenAnySignalAwaiter<Variant>{state.Get()};
 

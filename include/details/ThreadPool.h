@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <coroutine>
 #include <cstddef>
+#include <exception>
 #include <latch>
 #include <memory>
 #include <mutex>
@@ -24,6 +25,10 @@ namespace TKit
 	// frame-waiting coroutines behind (co_yield / WaitFor running on a worker),
 	// the worker paces itself with `frameInterval` between updates instead of
 	// spinning at 100% CPU.
+	//
+	// Destruction stops the workers promptly: tasks still queued or parked on a
+	// worker scheduler are NOT run to completion — they are destroyed with the
+	// scheduler. Drain the pool first if completion matters.
 	class ThreadPool final
 	{
 		struct WorkerContext
@@ -37,7 +42,7 @@ namespace TKit
 		ThreadPool(
 			TaskSchedulerManager& schedulerManager,
 			std::size_t threadCount,
-			std::size_t reservedTaskCount = 100,
+			std::size_t reservedTaskCount = DefaultReservedTaskCount,
 			std::chrono::nanoseconds frameInterval = std::chrono::milliseconds(1)
 		) :
 			schedulerManager_(&schedulerManager),
@@ -56,38 +61,59 @@ namespace TKit
 			// thread-safe); the constructor only returns once every worker did,
 			// so GetSchedulerId()/Schedule() are usable immediately.
 			std::latch schedulersReady(static_cast<std::ptrdiff_t>(threadCount));
+			std::mutex initExceptionMutex;
+			std::exception_ptr initException;
 
-			workers_.reserve(threadCount);
-			for (std::size_t i = 0; i < threadCount; ++i)
+			try
 			{
-				workers_.emplace_back([this, i, reservedTaskCount, &schedulersReady]()
+				workers_.reserve(threadCount);
+				for (std::size_t i = 0; i < threadCount; ++i)
 				{
-					auto& context = *workerContexts_[i];
-					context.schedulerId = schedulerManager_->CreateScheduler(std::this_thread::get_id(), reservedTaskCount);
-					schedulersReady.count_down();
-					WorkerMain(context);
-				});
+					workers_.emplace_back([this, i, reservedTaskCount, &schedulersReady, &initExceptionMutex, &initException]()
+					{
+						auto& context = *workerContexts_[i];
+						try
+						{
+							context.schedulerId = schedulerManager_->CreateScheduler(std::this_thread::get_id(), reservedTaskCount);
+						}
+						catch (...)
+						{
+							{
+								std::lock_guard lock(initExceptionMutex);
+								if (!initException)
+								{
+									initException = std::current_exception();
+								}
+							}
+							schedulersReady.count_down();
+							return;
+						}
+						schedulersReady.count_down();
+						WorkerMain(context);
+					});
+				}
+			}
+			catch (...)
+			{
+				// Thread creation failed part-way: stop and join the workers that
+				// did start before the latch and contexts leave scope.
+				StopWorkers();
+				throw;
 			}
 
 			schedulersReady.wait();
+
+			// The latch orders every count_down before this read.
+			if (initException)
+			{
+				StopWorkers();
+				std::rethrow_exception(initException);
+			}
 		}
 
 		~ThreadPool()
 		{
-			running_.store(false, std::memory_order_release);
-
-			for (const auto& context : workerContexts_)
-			{
-				{
-					std::lock_guard lock(context->mutex);
-				}
-				context->cv.notify_one();
-			}
-
-			for (auto& worker : workers_)
-			{
-				worker.join();
-			}
+			StopWorkers();
 		}
 
 		void Schedule(std::coroutine_handle<> handle)
@@ -132,6 +158,27 @@ namespace TKit
 		ThreadPool& operator=(ThreadPool&&) = delete;
 
 	private:
+		void StopWorkers() noexcept
+		{
+			running_.store(false, std::memory_order_release);
+
+			for (const auto& context : workerContexts_)
+			{
+				{
+					std::lock_guard lock(context->mutex);
+				}
+				context->cv.notify_one();
+			}
+
+			for (auto& worker : workers_)
+			{
+				if (worker.joinable())
+				{
+					worker.join();
+				}
+			}
+		}
+
 		void WorkerMain(WorkerContext& context)
 		{
 			TaskScheduler* scheduler = context.schedulerId.GetScheduler();
@@ -153,7 +200,11 @@ namespace TKit
 						continue;
 					}
 
-					if (!running_.load(std::memory_order_acquire) && scheduler->GetPendingTaskCount() == 0)
+					// Leave promptly on shutdown: waiting until the queue drains
+					// would busy-loop on frame/time-waiting coroutines (and never
+					// return for a yield-forever task). Whatever remains is
+					// destroyed with the scheduler.
+					if (!running_.load(std::memory_order_acquire))
 					{
 						break;
 					}

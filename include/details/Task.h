@@ -4,6 +4,7 @@
 #include <cassert>
 #include <coroutine>
 #include <cstddef>
+#include <cstdlib>
 #include <new>
 #include <utility>
 #include <variant>
@@ -26,8 +27,10 @@ namespace TKit
 			void* context;
 		};
 
+		// Note: frames are aligned to max_align_t; coroutines with over-aligned
+		// locals are not supported by the default allocation path.
 		inline constexpr std::size_t FrameHeaderSize =
-			(sizeof(FrameHeader) + alignof(std::max_align_t) - 1) & ~(alignof(std::max_align_t) - 1);
+			AlignUp(sizeof(FrameHeader), alignof(std::max_align_t));
 
 		[[nodiscard]]
 		inline void* AllocateFrame(std::size_t size)
@@ -89,13 +92,6 @@ namespace TKit
 			return IsReady();
 		}
 
-		[[nodiscard]]
-		Task<std::monostate> ToMonostateTask() &&
-		{
-			co_await std::move(*this);
-			co_return std::monostate{};
-		}
-
 		Task(const Task&) = delete;
 		Task& operator=(const Task&) = delete;
 
@@ -138,6 +134,13 @@ namespace TKit
 		explicit Awaiter(Task&& task) noexcept :
 			task_(std::move(task))
 		{
+			// Awaiting an empty (moved-from) task would dereference a null
+			// handle below; fail loudly instead.
+			assert(task_.handle_ && "co_await on an empty (moved-from) Task");
+			if (!task_.handle_)
+			{
+				std::abort();
+			}
 		}
 
 		[[nodiscard]]
@@ -193,6 +196,11 @@ namespace TKit
 			return {};
 		}
 
+		// Note on thread affinity: the continuation is resumed inline on the
+		// thread the task completed on (symmetric transfer). A task that
+		// completes on a pool worker resumes its awaiter on that worker; use
+		// SwitchToSelectedScheduler (or RunOnThreadPool, which does it for you)
+		// to get back to a specific scheduler.
 		auto final_suspend() noexcept
 		{
 			struct FinalAwaiter

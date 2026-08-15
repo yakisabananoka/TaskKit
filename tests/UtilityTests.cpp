@@ -917,6 +917,72 @@ namespace TKit::Tests
 		EXPECT_EQ(counter, 2);
 	}
 
+	TEST_F(UtilityTests, WhenAllAwaitsRemainingTasksAfterException)
+	{
+		int counter2 = 0;
+		bool threw = false;
+
+		auto task1 = [&]() -> Task<>
+		{
+			co_yield {};
+			throw std::runtime_error("task1 failed");
+		};
+
+		auto task2 = [&]() -> Task<>
+		{
+			counter2++;
+			co_yield {};
+			co_yield {};
+			counter2++;
+			co_return;
+		};
+
+		auto allTask = [&]() -> Task<>
+		{
+			try
+			{
+				co_await WhenAll(task1(), task2());
+			}
+			catch (const std::runtime_error&)
+			{
+				threw = true;
+			}
+			co_return;
+		};
+
+		allTask().Forget();
+		EXPECT_EQ(counter2, 1);
+		EXPECT_FALSE(threw);
+
+		RunScheduler(1);
+		EXPECT_FALSE(threw);
+
+		// The exception must only surface after task2 also finished.
+		RunScheduler(1);
+		EXPECT_EQ(counter2, 2);
+		EXPECT_TRUE(threw);
+	}
+
+	TEST_F(UtilityTests, LvalueAwaiterCanBeAwaited)
+	{
+		int counter = 0;
+
+		auto task = [&]() -> Task<>
+		{
+			counter++;
+			auto wait = DelayFrame(1);
+			co_await wait;
+			counter++;
+			co_return;
+		};
+
+		task().Forget();
+		EXPECT_EQ(counter, 1);
+
+		RunScheduler(1);
+		EXPECT_EQ(counter, 2);
+	}
+
 	TEST_F(UtilityTests, RunOnThreadPoolReturnsToOriginalScheduler)
 	{
 		std::latch latch{1};
