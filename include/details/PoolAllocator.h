@@ -181,9 +181,13 @@ namespace TKit
 			std::uint64_t allocatorId;
 		};
 
+		// Deliberately static: a process-wide monotonic id source. Ids are never
+		// reused, which is what makes the thread-local cache below safe across
+		// allocator instances. Constant-initialized atomic — no init-order or
+		// teardown hazards.
 		static std::uint64_t GetNextId()
 		{
-			static std::atomic<std::uint64_t> counter{1};
+			static constinit std::atomic<std::uint64_t> counter{1};
 			return counter.fetch_add(1, std::memory_order_relaxed);
 		}
 
@@ -322,9 +326,12 @@ namespace TKit
 
 		ThreadLocalPool* GetOrCreateThreadPool()
 		{
-			// Cache keyed by allocator id: ids are never reused, so a stale entry
-			// from a destroyed allocator can never be mistaken for this one.
-			thread_local TlsCacheEntry cache = {nullptr, 0};
+			// Deliberately thread-local: this cache is what keeps the allocation
+			// hot path lock-free (without it every Allocate would take the
+			// registry mutex). Keyed by allocator id: ids are never reused, so a
+			// stale entry from a destroyed allocator can never be mistaken for
+			// this one. Trivially destructible, so safe at thread teardown.
+			thread_local constinit TlsCacheEntry cache = {nullptr, 0};
 			if (cache.pool && cache.allocatorId == id_)
 			{
 				return cache.pool;

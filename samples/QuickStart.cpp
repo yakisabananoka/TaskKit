@@ -50,8 +50,8 @@ int main()
     TaskSystem taskSystem;
 
     {
-        const auto id = taskSystem.CreateScheduler();
-        auto activation = TaskSystem::ActivateScheduler(id);
+        const auto scheduler = taskSystem.CreateScheduler();
+        auto activation = scheduler.Activate();
 
         // Run different examples (uncomment to try)
         //ExampleDelayFrameTask().Forget();
@@ -59,11 +59,11 @@ int main()
 
         std::printf("Before calling ExampleWhenAllTask().Forget()\n");
         ExampleWhenAllTask().Forget();
-        std::printf("After calling ExampleWhenAllTask().Forget(), pending tasks: %zu\n", TaskSystem::GetPendingTaskCount(id));
+        std::printf("After calling ExampleWhenAllTask().Forget(), pending tasks: %zu\n", scheduler.GetPendingTaskCount());
 
-        while (TaskSystem::GetPendingTaskCount(id) > 0)
+        while (scheduler.GetPendingTaskCount() > 0)
         {
-            TaskSystem::UpdateActivatedScheduler();
+            scheduler.Update();
             std::this_thread::sleep_for(16ms);
         }
 

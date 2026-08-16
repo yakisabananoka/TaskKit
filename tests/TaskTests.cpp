@@ -279,8 +279,8 @@ namespace TKit::Tests
 		std::optional<TaskSystem> taskSystem;
 		taskSystem.emplace();
 		{
-			const auto id = taskSystem->CreateScheduler();
-			auto activation = TaskSystem::ActivateScheduler(id);
+			const auto scheduler = taskSystem->CreateScheduler();
+			auto activation = scheduler.Activate();
 			taskSystem.reset();
 		} // The guard is destroyed after the TaskSystem — must release cleanly.
 		SUCCEED();

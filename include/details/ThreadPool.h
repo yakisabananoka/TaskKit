@@ -13,8 +13,8 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#include "SchedulerHandle.h"
 #include "TaskScheduler.h"
-#include "TaskSchedulerId.h"
 #include "TaskSchedulerManager.h"
 
 namespace TKit
@@ -33,7 +33,7 @@ namespace TKit
 	{
 		struct WorkerContext
 		{
-			TaskSchedulerId schedulerId;
+			SchedulerHandle scheduler;
 			std::mutex mutex;
 			std::condition_variable cv;
 		};
@@ -59,7 +59,7 @@ namespace TKit
 
 			// Each worker registers its own scheduler (CreateScheduler is
 			// thread-safe); the constructor only returns once every worker did,
-			// so GetSchedulerId()/Schedule() are usable immediately.
+			// so GetScheduler()/Schedule() are usable immediately.
 			std::latch schedulersReady(static_cast<std::ptrdiff_t>(threadCount));
 			std::mutex initExceptionMutex;
 			std::exception_ptr initException;
@@ -74,7 +74,7 @@ namespace TKit
 						auto& context = *workerContexts_[i];
 						try
 						{
-							context.schedulerId = schedulerManager_->CreateScheduler(std::this_thread::get_id(), reservedTaskCount);
+							context.scheduler = schedulerManager_->CreateScheduler(std::this_thread::get_id(), reservedTaskCount);
 						}
 						catch (...)
 						{
@@ -127,7 +127,7 @@ namespace TKit
 			assert(workerIndex < workerContexts_.size() && "ThreadPool: invalid worker index");
 			auto& context = *workerContexts_[workerIndex];
 
-			schedulerManager_->Schedule(context.schedulerId, handle);
+			context.scheduler.Schedule(handle);
 
 			// The empty critical section pairs with the predicate check the worker
 			// performs under the same mutex, so the wakeup cannot be lost;
@@ -146,10 +146,10 @@ namespace TKit
 		}
 
 		[[nodiscard]]
-		TaskSchedulerId GetSchedulerId(std::size_t workerIndex) const
+		SchedulerHandle GetScheduler(std::size_t workerIndex) const
 		{
 			assert(workerIndex < workerContexts_.size() && "ThreadPool: invalid worker index");
-			return workerContexts_[workerIndex]->schedulerId;
+			return workerContexts_[workerIndex]->scheduler;
 		}
 
 		ThreadPool(const ThreadPool&) = delete;
@@ -181,7 +181,7 @@ namespace TKit
 
 		void WorkerMain(WorkerContext& context)
 		{
-			TaskScheduler* scheduler = context.schedulerId.GetScheduler();
+			TaskScheduler* scheduler = context.scheduler.GetScheduler();
 
 			const auto hasWork = [this, scheduler]()
 			{
@@ -210,9 +210,9 @@ namespace TKit
 					}
 				}
 
-				schedulerManager_->ActivateScheduler(context.schedulerId);
-				schedulerManager_->UpdateActivatedScheduler();
-				schedulerManager_->DeactivateScheduler();
+				// Update makes the scheduler current for its duration, so tasks
+				// created by resumed coroutines bind to this worker.
+				context.scheduler.Update();
 
 				// Anything still pending yielded to the "next frame" — pace the
 				// next update instead of spinning. Shutdown interrupts the wait.

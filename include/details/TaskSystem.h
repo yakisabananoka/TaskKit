@@ -3,16 +3,14 @@
 
 #include <algorithm>
 #include <cassert>
-#include <coroutine>
 #include <cstddef>
 #include <cstdlib>
 #include <memory>
 #include <optional>
 #include <thread>
-#include <utility>
 #include "PoolAllocator.h"
 #include "PromiseContext.h"
-#include "TaskSchedulerId.h"
+#include "SchedulerHandle.h"
 #include "TaskSchedulerManager.h"
 #include "TaskSystemConfiguration.h"
 #include "ThreadPool.h"
@@ -25,59 +23,10 @@ namespace TKit
 	// drain your schedulers first. Instances are independent; several may
 	// coexist, e.g. one per test. A Task binds to the system whose scheduler
 	// is active on the creating thread, so activate a scheduler (see
-	// ActivateScheduler) before creating tasks.
+	// SchedulerHandle::Activate) before creating tasks.
 	class TaskSystem final
 	{
 	public:
-		// RAII guard for the thread-local scheduler activation stack. Remembers
-		// which scheduler it activated so a non-LIFO release is caught, and only
-		// touches thread-local state on release — destroying a guard after the
-		// TaskSystem itself is safe.
-		struct SchedulerActivation final
-		{
-			SchedulerActivation() : scheduler_(nullptr)
-			{
-			}
-
-			explicit SchedulerActivation(const TaskSchedulerId& id) :
-				scheduler_(id.GetScheduler())
-			{
-				TaskSchedulerManager::ActivateScheduler(id);
-			}
-
-			~SchedulerActivation()
-			{
-				if (scheduler_)
-				{
-					TaskSchedulerManager::DeactivateScheduler(scheduler_);
-				}
-			}
-
-			SchedulerActivation(const SchedulerActivation&) = delete;
-			SchedulerActivation& operator=(const SchedulerActivation&) = delete;
-
-			SchedulerActivation(SchedulerActivation&& other) noexcept :
-				scheduler_(std::exchange(other.scheduler_, nullptr))
-			{
-			}
-
-			SchedulerActivation& operator=(SchedulerActivation&& other) noexcept
-			{
-				if (this != &other)
-				{
-					if (scheduler_)
-					{
-						TaskSchedulerManager::DeactivateScheduler(scheduler_);
-					}
-					scheduler_ = std::exchange(other.scheduler_, nullptr);
-				}
-				return *this;
-			}
-
-		private:
-			TaskScheduler* scheduler_;
-		};
-
 		explicit TaskSystem(const TaskSystemConfiguration& config = TaskSystemConfiguration{}) :
 			ownerThreadId_(std::this_thread::get_id()),
 			reservedTaskCount_(config.reservedTaskCount),
@@ -141,44 +90,11 @@ namespace TKit
 		// reservedTaskCount defaults to the value configured at construction
 		// (TaskSystemConfiguration::reservedTaskCount).
 		[[nodiscard]]
-		TaskSchedulerId CreateScheduler(std::optional<std::thread::id> threadId = std::nullopt, std::optional<std::size_t> reservedTaskCount = std::nullopt)
+		SchedulerHandle CreateScheduler(std::optional<std::thread::id> threadId = std::nullopt, std::optional<std::size_t> reservedTaskCount = std::nullopt)
 		{
 			return schedulerManager_.CreateScheduler(
 				threadId.value_or(std::this_thread::get_id()),
 				reservedTaskCount.value_or(reservedTaskCount_));
-		}
-
-		// The operations below act on a scheduler id or on the calling thread's
-		// activation stack, not on a particular TaskSystem instance, so they are
-		// static and keep working while activation guards outlive the system.
-
-		[[nodiscard]]
-		static SchedulerActivation ActivateScheduler(const TaskSchedulerId& id)
-		{
-			assert(id.GetThreadId() == std::this_thread::get_id() && "Cannot activate scheduler for different thread.");
-			return SchedulerActivation{id};
-		}
-
-		[[nodiscard]]
-		static TaskSchedulerId GetActivatedSchedulerId()
-		{
-			return TaskSchedulerManager::GetActivatedSchedulerId();
-		}
-
-		static void UpdateActivatedScheduler()
-		{
-			TaskSchedulerManager::UpdateActivatedScheduler();
-		}
-
-		[[nodiscard]]
-		static std::size_t GetPendingTaskCount(const TaskSchedulerId& id)
-		{
-			return TaskSchedulerManager::GetPendingTaskCount(id);
-		}
-
-		static void Schedule(const TaskSchedulerId& id, std::coroutine_handle<> handle)
-		{
-			TaskSchedulerManager::Schedule(id, handle);
 		}
 
 	private:

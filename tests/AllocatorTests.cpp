@@ -5,9 +5,9 @@ namespace TKit::Tests
 	class AllocatorTests : public ::testing::Test
 	{
 	protected:
-		static void CheckPendingTasksAreZero(const TaskSchedulerId& schedulerId)
+		static void CheckPendingTasksAreZero(const SchedulerHandle& scheduler)
 		{
-			const auto pendingCount = TaskSystem::GetPendingTaskCount(schedulerId);
+			const auto pendingCount = scheduler.GetPendingTaskCount();
 			EXPECT_EQ(pendingCount, 0)
 				<< "Test left " << pendingCount << " pending tasks";
 		}
@@ -47,9 +47,9 @@ namespace TKit::Tests
 
 		TaskSystem taskSystem{config};
 
-		const auto schedulerId = taskSystem.CreateScheduler();
+		const auto scheduler = taskSystem.CreateScheduler();
 		{
-			auto registration = TaskSystem::ActivateScheduler(schedulerId);
+			auto registration = scheduler.Activate();
 
 			auto task = []() -> Task<>
 			{
@@ -80,7 +80,7 @@ namespace TKit::Tests
 				<< "Should deallocate at least once per additional task";
 		}
 
-		CheckPendingTasksAreZero(schedulerId);
+		CheckPendingTasksAreZero(scheduler);
 	}
 
 	TEST_F(AllocatorTests, DifferentSizedTasks)
@@ -120,9 +120,9 @@ namespace TKit::Tests
 
 		TaskSystem taskSystem{config};
 
-		const auto schedulerId = taskSystem.CreateScheduler();
+		const auto scheduler = taskSystem.CreateScheduler();
 		{
-			auto registration = TaskSystem::ActivateScheduler(schedulerId);
+			auto registration = scheduler.Activate();
 
 			auto smallTask = []() -> Task<>
 			{
@@ -143,14 +143,14 @@ namespace TKit::Tests
 			smallTask().Forget();
 			largeTask().Forget();
 
-			TaskSystem::UpdateActivatedScheduler();
+			scheduler.Update();
 
 			EXPECT_LT(minSize, SIZE_MAX) << "Should have tracked minimum size";
 			EXPECT_GT(maxSize, 0) << "Should have tracked maximum size";
 			EXPECT_LT(minSize, maxSize) << "Should have different sized allocations";
 		}
 
-		CheckPendingTasksAreZero(schedulerId);
+		CheckPendingTasksAreZero(scheduler);
 	}
 
 	TEST_F(AllocatorTests, PoolAllocatorReuse)
@@ -201,9 +201,9 @@ namespace TKit::Tests
 
 		TaskSystem taskSystem{config};
 
-		const auto schedulerId = taskSystem.CreateScheduler();
+		const auto scheduler = taskSystem.CreateScheduler();
 		{
-			auto registration = TaskSystem::ActivateScheduler(schedulerId);
+			auto registration = scheduler.Activate();
 
 			constexpr int taskCount = 100;
 			for (int i = 0; i < taskCount; ++i)
@@ -226,7 +226,7 @@ namespace TKit::Tests
 			::operator delete(ptr);
 		}
 
-		CheckPendingTasksAreZero(schedulerId);
+		CheckPendingTasksAreZero(scheduler);
 	}
 
 	TEST_F(AllocatorTests, NestedTaskAllocations)
@@ -252,9 +252,9 @@ namespace TKit::Tests
 
 		TaskSystem taskSystem{config};
 
-		const auto schedulerId = taskSystem.CreateScheduler();
+		const auto scheduler = taskSystem.CreateScheduler();
 		{
-			auto registration = TaskSystem::ActivateScheduler(schedulerId);
+			auto registration = scheduler.Activate();
 
 			const int initialAllocCount = allocCount;
 
@@ -272,7 +272,7 @@ namespace TKit::Tests
 
 			outerTask().Forget();
 
-			TaskSystem::UpdateActivatedScheduler();
+			scheduler.Update();
 
 			EXPECT_GT(allocCount, initialAllocCount + 1)
 				<< "Should allocate for nested tasks";

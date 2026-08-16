@@ -649,7 +649,7 @@ namespace TKit::Tests
 	{
 		std::latch latch{1};
 		std::thread::id mainThreadId = std::this_thread::get_id();
-		auto mainSchedulerId = GetSchedulerId();
+		auto mainScheduler = GetScheduler();
 		std::thread::id capturedThreadId;
 		bool switchedBack = false;
 
@@ -661,7 +661,7 @@ namespace TKit::Tests
 
 			EXPECT_NE(std::this_thread::get_id(), mainThreadId);
 
-			co_await TKit::SwitchToSelectedScheduler(mainSchedulerId);
+			co_await TKit::SwitchToSelectedScheduler(mainScheduler);
 
 			capturedThreadId = std::this_thread::get_id();
 			switchedBack = true;
@@ -686,7 +686,7 @@ namespace TKit::Tests
 	{
 		std::latch latch{1};
 		std::thread::id mainThreadId = std::this_thread::get_id();
-		auto mainSchedulerId = GetSchedulerId();
+		auto mainScheduler = GetScheduler();
 		int switchCount = 0;
 		bool completed = false;
 
@@ -698,7 +698,7 @@ namespace TKit::Tests
 				EXPECT_NE(std::this_thread::get_id(), mainThreadId);
 				switchCount++;
 
-				co_await TKit::SwitchToSelectedScheduler(mainSchedulerId);
+				co_await TKit::SwitchToSelectedScheduler(mainScheduler);
 				EXPECT_EQ(std::this_thread::get_id(), mainThreadId);
 				switchCount++;
 			}

@@ -109,7 +109,7 @@ namespace TKit::Tests
 
 		for (std::size_t worker = 0; worker < 4; ++worker)
 		{
-			auto expectedThreadId = pool.GetSchedulerId(worker).GetThreadId();
+			auto expectedThreadId = pool.GetScheduler(worker).GetThreadId();
 
 			for (int i = 0; i < tasksPerWorker; ++i)
 			{
@@ -123,14 +123,14 @@ namespace TKit::Tests
 		EXPECT_EQ(successCount.load(), totalTasks);
 	}
 
-	TEST_F(ThreadPoolTests, GetSchedulerId)
+	TEST_F(ThreadPoolTests, GetScheduler)
 	{
 		ThreadPool pool(*schedulerManager_, 3);
 
 		for (std::size_t i = 0; i < 3; ++i)
 		{
-			auto id = pool.GetSchedulerId(i);
-			EXPECT_NE(id.GetThreadId(), std::thread::id{});
+			auto scheduler = pool.GetScheduler(i);
+			EXPECT_NE(scheduler.GetThreadId(), std::thread::id{});
 		}
 	}
 

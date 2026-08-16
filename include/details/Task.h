@@ -9,10 +9,10 @@
 #include <utility>
 #include <variant>
 #include "AwaitTransformer.h"
+#include "CurrentScheduler.h"
 #include "PromiseBase.h"
 #include "PromiseContext.h"
 #include "TaskAllocator.h"
-#include "TaskSchedulerManager.h"
 
 namespace TKit
 {
@@ -35,7 +35,7 @@ namespace TKit
 		[[nodiscard]]
 		inline void* AllocateFrame(std::size_t size)
 		{
-			const TaskAllocator& allocator = TaskSchedulerManager::RequireCurrentPromiseContext().GetAllocator();
+			const TaskAllocator& allocator = RequireCurrentPromiseContext().GetAllocator();
 			void* raw = allocator.Allocate(size + FrameHeaderSize);
 			new (raw) FrameHeader{allocator.GetDeallocateFunc(), allocator.GetContext()};
 			return static_cast<char*>(raw) + FrameHeaderSize;
@@ -258,7 +258,7 @@ namespace TKit
 				}
 			};
 
-			return YieldAwaiter{&TaskSchedulerManager::RequireActiveScheduler()};
+			return YieldAwaiter{&Details::RequireCurrentScheduler()};
 		}
 
 		template<Awaitable U>

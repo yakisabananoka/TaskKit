@@ -109,16 +109,16 @@ int main()
 
     {
         // スケジューラを作成してアクティブ化
-        auto id = taskSystem.CreateScheduler();
-        auto activation = TaskSystem::ActivateScheduler(id);
+        auto scheduler = taskSystem.CreateScheduler();
+        auto activation = scheduler.Activate();
 
         // タスクを開始（ファイア・アンド・フォーゲット）
         ExampleTask().Forget();
 
         // 毎フレームスケジューラを更新
-        while (TaskSystem::GetPendingTaskCount(id) > 0)
+        while (scheduler.GetPendingTaskCount() > 0)
         {
-            TaskSystem::UpdateActivatedScheduler();
+            scheduler.Update();
             std::this_thread::sleep_for(16ms); // 約60 FPS
         }
     }
@@ -148,8 +148,8 @@ TaskKitのタスクは、シンプルなライフサイクルに従います：
 
 **主な特徴:**
 - アプリケーション起動時に`TaskSystem`インスタンスを構築します。クリーンアップはRAIIで行われます
-- スケジューラはスレッドIDを含む一意のIDで識別されます
-- `SchedulerActivation` RAIIガードが現在のスケジューラコンテキストを管理します
+- スケジューラは非所有の`SchedulerHandle`を通して操作します（`std::coroutine_handle`と同じ発想です）
+- `scheduler.Activate()`が返す`SchedulerActivation` RAIIガードが現在のスケジューラを管理します。関与するスレッドローカル状態は「最内のアクティベーションを指すポインタ1つ」だけです
 - 重い計算をオフロードするための組み込みスレッドプール
 
 タスクは「作成時にそのスレッドでアクティブなスケジューラ」が属するTaskSystemに結び付きます。**タスクを作成する前にスケジューラをアクティブ化してください**。
@@ -161,19 +161,19 @@ TaskKitのタスクは、シンプルなライフサイクルに従います：
 TaskSystem taskSystem;
 
 // メインスレッド用のスケジューラを作成
-auto id = taskSystem.CreateScheduler();
+auto scheduler = taskSystem.CreateScheduler();
 
 // 現在のスケジューラとしてアクティブ化（RAIIガード）
 {
-    auto activation = TaskSystem::ActivateScheduler(id);
+    auto activation = scheduler.Activate();
 
     // ここで作成されたタスクはこのスケジューラを使用します
     MyTask().Forget();
 
     // 更新ループ
-    while (TaskSystem::GetPendingTaskCount(id) > 0)
+    while (scheduler.GetPendingTaskCount() > 0)
     {
-        TaskSystem::UpdateActivatedScheduler();
+        scheduler.Update();
     }
 
 } // 自動的に非アクティブ化されます
@@ -262,7 +262,7 @@ Task<> WhenAnyExample()
 > **スレッド親和性の注意**: タスクの完了時、awaitしていた側のコルーチンは**完了したスレッド上でインラインに再開**されます。ワーカー上で完了するタスクをawaitすると、その後のコードはワーカー上で実行され続けます。特定のスケジューラに戻る必要がある場合は`SwitchToSelectedScheduler`を使うか、自動で元に戻る`RunOnThreadPool`を使用してください。
 
 ```cpp
-Task<> ThreadPoolExample(TaskSchedulerId mainSchedulerId)
+Task<> ThreadPoolExample(SchedulerHandle mainScheduler)
 {
     // 重い計算のためにスレッドプールに切り替え
     co_await SwitchToThreadPool();
@@ -271,7 +271,7 @@ Task<> ThreadPoolExample(TaskSchedulerId mainSchedulerId)
     auto result = HeavyComputation();
 
     // メインスケジューラに戻る
-    co_await SwitchToSelectedScheduler(mainSchedulerId);
+    co_await SwitchToSelectedScheduler(mainScheduler);
 
     // メインスレッドに戻った
     UpdateUI(result);
@@ -455,12 +455,20 @@ Task<> ProcessEvent()
 
 - `TaskSystem(config)` - コンストラクタ。オプションの設定を受け取ります
 - デストラクタ - スレッドプールを即時停止し(キュー・待機中のプールタスクは完了されず破棄されます)、全体を破棄します。構築したスレッドで実行する必要があります。完了が必要な場合は事前にスケジューラをドレインしてください。また、未完了タスクの`Task`オブジェクトをインスタンスより長く保持しないでください。
-- `CreateScheduler(threadId, reservedCount)` - このインスタンスに新しいスケジューラを作成し、IDを返します
-- `ActivateScheduler(id)` *(static)* - スケジューラをアクティブ化するRAIIガードを返します
-- `UpdateActivatedScheduler()` *(static)* - アクティブなスケジューラの保留中のタスクを処理します
-- `GetPendingTaskCount(id)` *(static)* - 保留中のタスク数を取得します
-- `GetActivatedSchedulerId()` *(static)* - 現在アクティブなスケジューラIDを取得します
-- `Schedule(id, handle)` *(static)* - コルーチンハンドルを特定のスケジューラにスケジュールします
+- `CreateScheduler(threadId, reservedCount)` - このインスタンスに新しいスケジューラを作成し、`SchedulerHandle`を返します
+
+#### `SchedulerHandle`
+
+スケジューラへの非所有ハンドルです。スケジューラの操作はすべてここに集約されています。所有する`TaskSystem`が破棄されるまで有効です。
+
+- `Activate()` - このスケジューラを呼び出しスレッドのカレントにする`SchedulerActivation` RAIIガードを返します（所有スレッドのみ）。タスクを作成する前にアクティブ化してください
+- `Update()` - 保留中のタスクを1フレーム分処理します（所有スレッドのみ）。実行中はこのスケジューラがカレントになるため、更新自体に別途アクティベーションは不要です
+- `GetPendingTaskCount()` - 保留中のタスク数を取得します（スレッドセーフ）
+- `Schedule(handle)` - コルーチンハンドルをこのスケジューラにスケジュールします（スレッドセーフ）
+
+#### フリー関数
+
+- `GetActivatedScheduler()` - 現在このスレッドでアクティブなスケジューラのハンドルを取得します
 
 #### `TaskSystemConfiguration::Builder`
 
@@ -537,12 +545,12 @@ co_await SwitchToThreadPool();
 // ワーカースレッドで実行中
 ```
 
-#### `SwitchToSelectedScheduler(id)`
+#### `SwitchToSelectedScheduler(scheduler)`
 
 コルーチンの実行を指定されたスケジューラに切り替えます。
 
 ```cpp
-co_await SwitchToSelectedScheduler(mainSchedulerId);
+co_await SwitchToSelectedScheduler(mainScheduler);
 // メインスレッドで実行中
 ```
 

@@ -16,18 +16,18 @@ namespace TKit::Tests
 		void SetUp() override
 		{
 			taskSystem_.emplace();
-			schedulerId_ = taskSystem_->CreateScheduler();
-			registration_ = TaskSystem::ActivateScheduler(schedulerId_);
+			scheduler_ = taskSystem_->CreateScheduler();
+			registration_ = scheduler_.Activate();
 		}
 
 		void TearDown() override
 		{
-			const auto pendingCount = TaskSystem::GetPendingTaskCount(schedulerId_);
+			const auto pendingCount = scheduler_.GetPendingTaskCount();
 
 			EXPECT_EQ(pendingCount, 0)
 				<< "Test left " << pendingCount << " pending tasks";
 
-			registration_ = TaskSystem::SchedulerActivation();
+			registration_ = SchedulerActivation{};
 			taskSystem_.reset();
 		}
 
@@ -35,7 +35,7 @@ namespace TKit::Tests
 		{
 			for (int i = 0; i < frames; ++i)
 			{
-				TaskSystem::UpdateActivatedScheduler();
+				scheduler_.Update();
 			}
 		}
 
@@ -69,15 +69,15 @@ namespace TKit::Tests
 		}
 
 		[[nodiscard]]
-		TaskSchedulerId GetSchedulerId() const
+		SchedulerHandle GetScheduler() const
 		{
-			return schedulerId_;
+			return scheduler_;
 		}
 
 	private:
 		std::optional<TaskSystem> taskSystem_;
-		TaskSchedulerId schedulerId_;
-		TaskSystem::SchedulerActivation registration_;
+		SchedulerHandle scheduler_;
+		SchedulerActivation registration_;
 	};
 }
 

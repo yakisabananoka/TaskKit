@@ -121,11 +121,11 @@ namespace
 		(void)co_await TKit::WhenAny(IntTask(1), IntTask(2));
 	}
 
-	void Drain(const TKit::TaskSchedulerId& id)
+	void Drain(const TKit::SchedulerHandle& scheduler)
 	{
-		while (TKit::TaskSystem::GetPendingTaskCount(id) > 0)
+		while (scheduler.GetPendingTaskCount() > 0)
 		{
-			TKit::TaskSystem::UpdateActivatedScheduler();
+			scheduler.Update();
 		}
 	}
 }
@@ -149,9 +149,9 @@ int main()
 		.WithThreadPoolSize(2)
 		.Build()};
 
-	const auto id = taskSystem.CreateScheduler(std::nullopt, 30000);
+	const auto scheduler = taskSystem.CreateScheduler(std::nullopt, 30000);
 	{
-		auto activation = TKit::TaskSystem::ActivateScheduler(id);
+		auto activation = scheduler.Activate();
 
 		// S1: fire-and-forget churn (task completes synchronously)
 		for (int i = 0; i < 50'000; ++i) { EmptyTask().Forget(); }
@@ -162,7 +162,7 @@ int main()
 		// S2: co_yield pump (1000 tasks x 100 yields)
 		const auto runYield = [&] {
 			for (int i = 0; i < 1000; ++i) { YieldTask(100).Forget(); }
-			Drain(id);
+			Drain(scheduler);
 		};
 		runYield();
 		before = Take();
@@ -172,7 +172,7 @@ int main()
 		// S3: DelayFrame pump (1000 tasks x 100 one-frame delays)
 		const auto runDelay = [&] {
 			for (int i = 0; i < 1000; ++i) { DelayFrameTask(100).Forget(); }
-			Drain(id);
+			Drain(scheduler);
 		};
 		runDelay();
 		before = Take();
@@ -182,7 +182,7 @@ int main()
 		// S4: WaitFor(5ms) x 10000 tasks
 		const auto runWait = [&] {
 			for (int i = 0; i < 10'000; ++i) { WaitForTask(5ms).Forget(); }
-			Drain(id);
+			Drain(scheduler);
 		};
 		runWait();
 		before = Take();

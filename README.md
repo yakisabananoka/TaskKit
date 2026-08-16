@@ -109,16 +109,16 @@ int main()
 
     {
         // Create and activate a scheduler
-        auto id = taskSystem.CreateScheduler();
-        auto activation = TaskSystem::ActivateScheduler(id);
+        auto scheduler = taskSystem.CreateScheduler();
+        auto activation = scheduler.Activate();
 
         // Start the task (fire-and-forget)
         ExampleTask().Forget();
 
         // Update scheduler each frame
-        while (TaskSystem::GetPendingTaskCount(id) > 0)
+        while (scheduler.GetPendingTaskCount() > 0)
         {
-            TaskSystem::UpdateActivatedScheduler();
+            scheduler.Update();
             std::this_thread::sleep_for(16ms); // ~60 FPS
         }
     }
@@ -148,8 +148,8 @@ A **TaskSystem** instance owns its schedulers, a built-in thread pool and the fr
 
 **Key features:**
 - Construct a `TaskSystem` at application startup; RAII handles the cleanup
-- Schedulers are identified by unique IDs containing thread ID
-- `SchedulerActivation` RAII guard manages the current scheduler context
+- Schedulers are operated through non-owning `SchedulerHandle`s, in the spirit of `std::coroutine_handle`
+- The `SchedulerActivation` RAII guard (from `scheduler.Activate()`) manages the current scheduler; the only thread-local state involved is a single pointer to the innermost activation
 - Built-in thread pool for offloading heavy computations
 
 Tasks bind to the system whose scheduler is active on the creating thread, so **activate a scheduler before creating tasks**.
@@ -161,19 +161,19 @@ Tasks bind to the system whose scheduler is active on the creating thread, so **
 TaskSystem taskSystem;
 
 // Create scheduler for main thread
-auto id = taskSystem.CreateScheduler();
+auto scheduler = taskSystem.CreateScheduler();
 
 // Activate as current (RAII guard)
 {
-    auto activation = TaskSystem::ActivateScheduler(id);
+    auto activation = scheduler.Activate();
 
     // Tasks created here use this scheduler
     MyTask().Forget();
 
     // Update loop
-    while (TaskSystem::GetPendingTaskCount(id) > 0)
+    while (scheduler.GetPendingTaskCount() > 0)
     {
-        TaskSystem::UpdateActivatedScheduler();
+        scheduler.Update();
     }
 
 } // Automatically deactivated
@@ -262,7 +262,7 @@ Task<> WhenAnyExample()
 > **Thread affinity note**: When a task completes, its awaiter is resumed **inline on the thread the task completed on**. Awaiting a task that finishes on a pool worker leaves the rest of your coroutine running on that worker. Use `SwitchToSelectedScheduler` to get back to a specific scheduler, or `RunOnThreadPool`, which returns automatically.
 
 ```cpp
-Task<> ThreadPoolExample(TaskSchedulerId mainSchedulerId)
+Task<> ThreadPoolExample(SchedulerHandle mainScheduler)
 {
     // Switch to thread pool for heavy computation
     co_await SwitchToThreadPool();
@@ -271,7 +271,7 @@ Task<> ThreadPoolExample(TaskSchedulerId mainSchedulerId)
     auto result = HeavyComputation();
 
     // Switch back to main scheduler
-    co_await SwitchToSelectedScheduler(mainSchedulerId);
+    co_await SwitchToSelectedScheduler(mainScheduler);
 
     // Back on main thread
     UpdateUI(result);
@@ -455,12 +455,20 @@ A task runtime instance owning schedulers, thread pool and frame allocator. Mult
 
 - `TaskSystem(config)` - Constructor; takes an optional configuration
 - Destructor - Stops the thread pool promptly (pool tasks still queued or waiting are destroyed, not completed) and tears everything down. Must run on the constructing thread. Drain your schedulers first if completion matters, and make sure no `Task` object for an unfinished task outlives the instance.
-- `CreateScheduler(threadId, reservedCount)` - Create new scheduler on this instance, returns ID
-- `ActivateScheduler(id)` *(static)* - Returns RAII guard that activates scheduler
-- `UpdateActivatedScheduler()` *(static)* - Process pending tasks on activated scheduler
-- `GetPendingTaskCount(id)` *(static)* - Get number of pending tasks
-- `GetActivatedSchedulerId()` *(static)* - Get currently activated scheduler ID
-- `Schedule(id, handle)` *(static)* - Schedule coroutine handle to specific scheduler
+- `CreateScheduler(threadId, reservedCount)` - Create new scheduler on this instance, returns a `SchedulerHandle`
+
+#### `SchedulerHandle`
+
+Non-owning handle to a scheduler; all scheduler operations live here. Valid until the owning `TaskSystem` is destroyed.
+
+- `Activate()` - Returns a `SchedulerActivation` RAII guard that makes this scheduler current on the calling thread (owner thread only); activate before creating tasks
+- `Update()` - Process pending tasks for one frame (owner thread only); the scheduler is current for the duration, so no separate activation is needed for the update itself
+- `GetPendingTaskCount()` - Get number of pending tasks (thread-safe)
+- `Schedule(handle)` - Schedule a coroutine handle to this scheduler (thread-safe)
+
+#### Free functions
+
+- `GetActivatedScheduler()` - Handle to the scheduler currently active on this thread
 
 #### `TaskSystemConfiguration::Builder`
 
@@ -537,12 +545,12 @@ co_await SwitchToThreadPool();
 // Now running on worker thread
 ```
 
-#### `SwitchToSelectedScheduler(id)`
+#### `SwitchToSelectedScheduler(scheduler)`
 
 Switches coroutine execution to specified scheduler.
 
 ```cpp
-co_await SwitchToSelectedScheduler(mainSchedulerId);
+co_await SwitchToSelectedScheduler(mainScheduler);
 // Now running on main thread
 ```
 

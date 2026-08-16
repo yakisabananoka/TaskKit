@@ -16,11 +16,11 @@
 #include <variant>
 #include <vector>
 #include "AwaitTransformer.h"
+#include "CurrentScheduler.h"
 #include "Exceptions.h"
 #include "PromiseContext.h"
+#include "SchedulerHandle.h"
 #include "Task.h"
-#include "TaskSchedulerId.h"
-#include "TaskSchedulerManager.h"
 #include "ThreadPool.h"
 
 namespace TKit
@@ -85,7 +85,7 @@ namespace TKit
 
 		void await_suspend(std::coroutine_handle<> handle) const
 		{
-			TaskSchedulerManager::RequireCurrentPromiseContext().GetThreadPool().Schedule(handle);
+			Details::RequireCurrentPromiseContext().GetThreadPool().Schedule(handle);
 		}
 
 		void await_resume() const noexcept
@@ -100,7 +100,7 @@ namespace TKit
 
 	struct SwitchToSelectedSchedulerAwaiter
 	{
-		TaskSchedulerId schedulerId;
+		SchedulerHandle scheduler;
 
 		[[nodiscard]]
 		bool await_ready() const noexcept
@@ -110,13 +110,7 @@ namespace TKit
 
 		void await_suspend(std::coroutine_handle<> handle) const
 		{
-			TaskScheduler* scheduler = schedulerId.GetScheduler();
-			assert(scheduler && "SwitchToSelectedScheduler: invalid scheduler id");
-			if (scheduler == nullptr)
-			{
-				std::abort();
-			}
-			scheduler->Schedule(handle);
+			scheduler.Schedule(handle);
 		}
 
 		void await_resume() const noexcept
@@ -124,9 +118,9 @@ namespace TKit
 		}
 	};
 
-	inline SwitchToSelectedSchedulerAwaiter SwitchToSelectedScheduler(TaskSchedulerId schedulerId)
+	inline SwitchToSelectedSchedulerAwaiter SwitchToSelectedScheduler(SchedulerHandle scheduler)
 	{
-		return SwitchToSelectedSchedulerAwaiter{schedulerId};
+		return SwitchToSelectedSchedulerAwaiter{scheduler};
 	}
 
 	// Runs `func` on the thread pool and always returns to the scheduler that was
@@ -141,7 +135,7 @@ namespace TKit
 		using Result = typename Details::RunOnThreadPoolResult<Func>::Type;
 		constexpr bool ReturnsTask = Details::TaskFuncTraits<Func>::IsTask;
 
-		const TaskSchedulerId originalSchedulerId{&TaskSchedulerManager::RequireActiveScheduler()};
+		const SchedulerHandle originalScheduler{&Details::RequireCurrentScheduler()};
 
 		co_await SwitchToThreadPool();
 
@@ -164,7 +158,7 @@ namespace TKit
 				exception = std::current_exception();
 			}
 
-			co_await SwitchToSelectedScheduler(originalSchedulerId);
+			co_await SwitchToSelectedScheduler(originalScheduler);
 			if (exception)
 			{
 				std::rethrow_exception(exception);
@@ -190,7 +184,7 @@ namespace TKit
 				exception = std::current_exception();
 			}
 
-			co_await SwitchToSelectedScheduler(originalSchedulerId);
+			co_await SwitchToSelectedScheduler(originalScheduler);
 			if (exception)
 			{
 				std::rethrow_exception(exception);
@@ -239,7 +233,7 @@ namespace TKit
 
 		void await_suspend(std::coroutine_handle<> handle) const
 		{
-			TaskSchedulerManager::RequireActiveScheduler().ScheduleFrameWait(handle, remainingFrames, stopToken);
+			Details::RequireCurrentScheduler().ScheduleFrameWait(handle, remainingFrames, stopToken);
 		}
 
 		void await_resume() const
@@ -264,7 +258,7 @@ namespace TKit
 
 		void await_suspend(std::coroutine_handle<> handle) const
 		{
-			TaskSchedulerManager::RequireActiveScheduler().ScheduleTimeWait(handle, due, stopToken);
+			Details::RequireCurrentScheduler().ScheduleTimeWait(handle, due, stopToken);
 		}
 
 		void await_resume() const
@@ -483,7 +477,7 @@ namespace TKit
 			{
 				static_assert(alignof(WhenAnyState) <= alignof(std::max_align_t));
 
-				const TaskAllocator& allocator = TaskSchedulerManager::RequireCurrentPromiseContext().GetAllocator();
+				const TaskAllocator& allocator = RequireCurrentPromiseContext().GetAllocator();
 				void* memory = allocator.Allocate(sizeof(WhenAnyState));
 				auto* state = new (memory) WhenAnyState();
 				state->deallocate = allocator.GetDeallocateFunc();
@@ -525,7 +519,7 @@ namespace TKit
 				// Resume inline when the parent lives on the scheduler currently
 				// running on this very thread (preserves same-frame completion);
 				// otherwise hand it to its own scheduler thread-safely.
-				if (resumeScheduler != nullptr && TaskSchedulerManager::CurrentActiveScheduler() != resumeScheduler)
+				if (resumeScheduler != nullptr && GetCurrentScheduler() != resumeScheduler)
 				{
 					resumeScheduler->Schedule(handle);
 				}
@@ -609,7 +603,7 @@ namespace TKit
 
 			bool await_suspend(std::coroutine_handle<> handle) noexcept
 			{
-				state->resumeScheduler = TaskSchedulerManager::CurrentActiveScheduler();
+				state->resumeScheduler = GetCurrentScheduler();
 
 				void* expected = nullptr;
 				return state->waiter.compare_exchange_strong(

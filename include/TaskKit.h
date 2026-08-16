@@ -5,6 +5,8 @@
 #include "details/TaskAllocator.h"
 #include "details/PoolAllocator.h"
 #include "details/TaskScheduler.h"
+#include "details/CurrentScheduler.h"
+#include "details/SchedulerHandle.h"
 #include "details/TaskSystem.h"
 #include "details/TaskSystemConfiguration.h"
 #include "details/PromiseBase.h"
